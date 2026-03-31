@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"C:\\\\Users\\\\User\\\\Documents\\\\GitHub\\\\agentic_workflow\\\\Montrroase_website\\\\client\\\\app\" -name \"page.tsx\" -exec wc -l {} +)",
+      "Bash(grep -r \"next/image\\\\|Image\" C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient --include=*.tsx)",
+      "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/components/scheduler -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
+      "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/components -type f -name *essaging* -o -name *essage*)",
+      "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/app/dashboard -type f -name *notes* -o -path */notes/*)"
+    ]
+  }
+}

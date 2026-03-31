@@ -1,0 +1,298 @@
+# Montrroase Next.js Client — Architecture Audit (Full)
+
+## Executive Summary
+
+The codebase is **large, actively growing, and functionally capable**, but has accumulated several structural problems that will increasingly cause bugs, slow development, and make onboarding difficult. The core issue is a **scattered, multi-taxonomy component organisation** that grew organically without a central rule: components are classified simultaneously by *role* (`admin/`, `agent/`, `client/`), by *feature* (`marketing/`, `scheduler/`), by *UI area* (`dashboard/`), and by *portal* (`portal/`, `management/`). These taxonomies overlap and conflict.
+
+---
+
+## 1. Component Directory — Multi-Axis Taxonomy Conflict
+
+The `components/` folder has **18 subdirectories** with no single consistent rule:
+
+```
+components/
+├── admin/          ← role-scoped
+├── agent/          ← role-scoped
+├── auth/           ← feature-scoped
+├── call/           ← feature-scoped
+├── client/         ← role-scoped (1 file only!)
+├── common/         ← generic utility
+├── dashboard/      ← UI-area-scoped (contains role sub-folders)
+├── developer/      ← sub-role scoped
+├── management/     ← portal-area scoped
+├── marketing/      ← feature-scoped (massive; 28 sub-dirs)
+├── messaging/      ← feature-scoped
+├── portal/         ← portal-area scoped
+├── profile/        ← feature-scoped
+├── quotes/         ← feature-scoped
+├── scheduler/      ← feature-scoped
+├── services/       ← feature-scoped
+├── settings/       ← feature-scoped
+├── ui/             ← design system primitives
+```
+
+> [!WARNING]
+> There is no documented rule deciding *when* a component should live in `dashboard/` vs `marketing/` vs `agent/` vs `management/`. This produces three separate systems for the same concept (tasks) split across `components/marketing/tasks/`, `components/management/tasks/`, and `components/agent/scheduling/`.
+
+### Top-Level Loose Files
+Four components sit **directly in `components/`** with no folder at all:
+- `AboutSectionOptimized.tsx`
+- `QuestionnaireWizard.tsx`
+- `ServiceSelector.tsx`
+- `ServiceSwitcher.tsx`
+- `image-carousel.tsx`
+- `interactive-glow-background.tsx`
+- `masonry-parallax-grid.tsx`
+
+These are marketing/landing-page components that should live in `components/marketing/landing/` or a dedicated `components/sections/` group.
+
+---
+
+## 2. Task Management — Three Parallel Implementations
+
+The most acute duplication in the codebase:
+
+| Location | Files | Scope |
+|---|---|---|
+| `components/marketing/tasks/` | `KanbanBoard`, `TaskCard`, `TaskForm`, `TaskListView`, `TaskTemplateManager` | Agent-marketing basic |
+| `components/management/tasks/` | `KanbanColumn`, `TaskCard`, `TaskCardOverlay`, `TaskModal`, `TasksKanbanView`, `TasksListView`, `TaskFilterBar`, `BulkActionBar`, `RecurrenceBuilder`, `ViewToggle`, `RejectionFeedbackPanel` | Management portal (more complete) |
+| `components/agent/scheduling/` | `CommandCenter`, `CrossClientTaskList`, `DaySchedule`, `QuickTaskInput`, `RecurringTaskManager`, `RecurringBlockManager`, `WeeklyPlanView`, `TimeBlockEditor`, `FocusTimer` | Scheduling engine |
+
+These three sets share logical concerns (task cards, kanban views, recurring tasks) but are entirely separate implementations. There is a `TaskCard.tsx` in both `marketing/tasks/` and `management/tasks/`.
+
+> [!CAUTION]
+> Bug fixes applied to one `TaskCard` will not propagate to the other. New features (e.g. a drag-handle, a priority badge) must be rebuilt in multiple places.
+
+---
+
+## 3. Dashboard Route Tree — Structural Mismatch with Components
+
+### Route tree:
+```
+app/dashboard/
+├── layout.tsx          ← The "god layout" — authentication, sockets, sidebars, chat widgets
+├── page.tsx            ← Role router
+├── admin/              ← 21 sub-routes
+├── agent/
+│   └── marketing/
+│       ├── layout.tsx  ← Mobile FAB
+│       ├── page.tsx    ← Agent overview (duplicate of management/page.tsx)
+│       └── management/ ← The "portal" (own sidebar, own layout)
+│           ├── layout.tsx
+│           ├── page.tsx
+│           ├── clients/
+│           ├── notes/
+│           ├── tasks/
+│           └── calendar/
+├── client/             ← 12 sub-routes
+└── guest/
+```
+
+### The Portal-within-Dashboard Problem
+
+The **management portal** (`/dashboard/agent/marketing/management/`) is a completely separate shell (its own sidebar `ManagementSidebar`, its own scroll container, its own error boundary) nested *inside* the global `DashboardLayout`. This is handled by path-string detection in the layout:
+
+```typescript
+// dashboard/layout.tsx line 91-93
+const isInPortal = 
+  !!pathname &&
+  (pathname === PORTAL_ROOT || pathname.startsWith(PORTAL_ROOT + '/'));
+```
+
+And then the global sidebar is conditionally suppressed:
+```typescript
+{!isInPortal && <Sidebar />}
+```
+
+And then the `ml-60` margin offset is switched between two different localStorage keys:
+```typescript
+isInPortal
+  ? (portalSidebarCollapsed ? 'md:ml-16' : 'md:ml-60')
+  : (sidebarCollapsed ? 'md:ml-16' : 'md:ml-60')
+```
+
+> [!CAUTION]
+> This is brittle. Any route path change to the management portal breaks the portal detection. The right architecture is to move the management portal **outside** of `/dashboard/` entirely (e.g. `/portal/marketing/`) or to use a [Route Group](https://nextjs.org/docs/app/building-your-application/routing/route-groups) `(portal)` at the route level to opt-out of the global dashboard layout without string matching.
+
+---
+
+## 4. The `sidebar.tsx` God Component — 618 Lines
+
+`components/dashboard/sidebar.tsx` (618 lines) contains **all navigation logic for all roles** in a single file:
+
+- `adminNavGroups` (object with 6 keys)
+- `clientNavGroups` (object with 3 keys)
+- `marketingAgentNavGroups` (object with 8 keys)
+- `developerAgentNavGroups` (object with 6 keys)
+- `guestNavGroups` (object with 3 keys)
+
+The render section then switches on `user.role` and `agentDepartment` with nested conditionals (lines 424–545).
+
+> [!WARNING]
+> Adding a new role, a new department, or a new nav item requires editing this single file. The nav data objects are also defined **inside the component body** (not extracted to constants), meaning they are recreated on every render — this is a minor performance issue but primarily a readability problem.
+
+**What should happen:**
+- Nav configs should be extracted to `lib/nav-config.ts` keyed by role/department.
+- The sidebar render should simply iterate `navGroups` without branching on role.
+- Each role's config object should be a separate file or a well-typed data structure.
+
+---
+
+## 5. Duplicate Dashboard Overview Pages
+
+`/dashboard/agent/marketing/page.tsx` and `/dashboard/agent/marketing/management/page.tsx` **render identical layouts** using the same hook (`useCommandCenter`) and the same four components (`CurrentTaskKpi`, `DashboardStatsRow`, `DashboardTaskList`, `ReadOnlySchedule`). The only difference is a `<h1>` title and a `Surface` wrapper on the error state.
+
+> [!WARNING]
+> One of these pages is redundant. The sidebar links "Command Center" → `/management` and "Overview" → the marketing root. Both show the same command-centre data. If the data model of these two pages is supposed to differ in the future, there is no current separation of concern to build on.
+
+---
+
+## 6. `lib/api.ts` — The 2757-Line Monolith
+
+The single `lib/api.ts` file is `~84 KB` and handles authentication, messaging, client management, realtime (Node.js service), group chat, and more. It contains **two different HTTP bases** (`baseURL` for Django, `realtimeBaseURL` for the Node.js service) with almost identical fetch wrappers. A separate `lib/api/` folder exists with split files (`marketing.ts`, `scheduling.ts`, `ads-manager.ts`, etc.) — but `lib/api.ts` itself was not correspondingly decomposed; it still has a commented note:
+
+```
+// ============ REMOVED METHODS ============
+// ...have been removed as they were part of the deprecated microservices
+// For marketing content, use the marketingApi from client/lib/api/marketing.ts
+```
+
+The migration *started* but the monolith was left standing. So now there are two data access layers at once.
+
+---
+
+## 7. Hooks — Split Between Two Locations
+
+```
+hooks/           ← root-level (8 loose hooks)
+  useAnalytics.ts
+  useBilling.ts
+  useContent.ts
+  useDashboard.ts
+  ...
+
+lib/hooks/       ← library-level (20+ hooks + 3 sub-dirs)
+  useAuth.ts
+  useScheduling.ts
+  useSchedulingEngine.ts
+  useClients.ts
+  marketing/      ← 14 marketing-specific hooks
+  admin/
+  developer/
+```
+
+Having two hook directories (`hooks/` at the client root and `lib/hooks/`) with no documented distinction between them violates the principle of least surprise. The root-level `hooks/` appears to be legacy; `lib/hooks/` is the live home. Most root-level hooks are empty stubs (0-byte files).
+
+> [!NOTE]
+> The zero-byte hook stubs at the root level (`useAnalytics.ts`, `useBilling.ts`, `useContent.ts`, `useDashboard.ts`, `useMessages.ts`, `useNotifications.ts`, `useScrollAnimation.ts`, `useSocialAccounts.ts`) were likely created as placeholders and never implemented. They should either be deleted or completed.
+
+---
+
+## 8. `DashboardLayout` — `useEffect` Called After Conditional Return
+
+In `app/dashboard/layout.tsx`:
+
+```typescript
+// line 144-153: conditional return
+if (loading) {
+  return <div>Loading...</div>;   // ← early return
+}
+
+// line 156-160: useEffect AFTER early return
+useEffect(() => {
+  if (!loading && !isAuthenticated && !isGuest) {
+    router.replace('/auth/login');
+  }
+}, [loading, isAuthenticated, isGuest, router]);
+```
+
+> [!CAUTION]
+> This is a **violation of the Rules of Hooks**. A `useEffect` must not be called after a conditional return. React will throw a "rendered more hooks than previous render" error if `loading` transitions from `true` to `false`. The redirect logic must be moved *before* the loading guard or handled inside the loading block.
+
+---
+
+## 9. `DashboardLayout` — `setInterval` Polling for `localStorage`
+
+```typescript
+// dashboard/layout.tsx lines 117-126
+const interval = setInterval(() => {
+  const collapsed = localStorage.getItem('sidebar-collapsed');
+  if (collapsed) setSidebarCollapsed(JSON.parse(collapsed));
+  ...
+}, 100);
+```
+
+A `setInterval` running every 100ms is polling `localStorage` to sync sidebar state between the root layout and a nested portal. This is called "same-window storage sync" — but it fires **10 times per second** for the entire lifetime of the dashboard session.
+
+> [!CAUTION]
+> This is a significant performance concern and an architectural smell. The correct solution is to use React Context or Zustand to share sidebar state between the global layout and the management portal, eliminating the need for localStorage polling altogether.
+
+---
+
+## 10. `components/dashboard/` — Mixed Abstraction Levels
+
+The `dashboard/` component folder contains:
+- **Atomic** display components: `breadcrumb.tsx`, `PlaceholderPage.tsx`
+- **Composite** role dashboards: `admin/`, `client/` (with their own grid layouts)
+- **Shell** components: `sidebar.tsx`, `topbar.tsx`, `ManagementSidebar.tsx`
+- **Dialogs**: `dialogs/dialog-*.tsx`
+- **Charts**: `charts/`
+
+These very different levels of abstraction inside a single flat folder makes it hard to discover components. A consumer cannot tell whether `dashboard/content/` is a feature slice or a UI utility.
+
+---
+
+## 11. Admin Sidebar Linking to Client Routes
+
+In the admin navigation (sidebar.tsx lines 172–186):
+
+```typescript
+company: [
+  {
+    href: '/dashboard/client/marketing',  // ← CLIENT route from ADMIN nav
+    label: 'Marketing',
+    ...
+  },
+  { href: '/dashboard/client/website-builder', label: 'Website', ... },
+],
+```
+
+Admin nav links point to `/dashboard/client/*` routes. This means the admin is navigating into the **client portal** to view their own marketing assets. This is a semantic problem — admin's company marketing view should be an admin-scoped route, not reusing the client portal. If the client route requires role === 'client' guards, this will silently fail.
+
+---
+
+## 12. `components/client/` — Nearly Empty
+
+`components/client/` contains only **one file**: `PhaseCountdownCard.tsx`. Meanwhile all client-facing dashboard components live in `components/dashboard/client/`. This makes the `components/client/` folder misleading — it implies client-specific components but almost nothing is there.
+
+---
+
+## Summary Table of Architectural Issues
+
+| # | Issue | Severity | Affected Files |
+|---|---|---|---|
+| 1 | Multi-axis component taxonomy (no rule) | High | All of `components/` |
+| 2 | Three separate task implementations | High | `marketing/tasks/`, `management/tasks/`, `agent/scheduling/` |
+| 3 | Portal-within-dashboard path-string detection | High | `dashboard/layout.tsx`, `management/layout.tsx` |
+| 4 | God Sidebar (618 lines, all roles) | Medium | `dashboard/sidebar.tsx` |
+| 5 | Duplicate management/agent overview pages | Medium | `agent/marketing/page.tsx` + `management/page.tsx` |
+| 6 | `lib/api.ts` monolith (2757 lines, 2 HTTP bases) | Medium | `lib/api.ts` + `lib/api/` |
+| 7 | Two hook directories, empty stubs at root | Medium | `hooks/`, `lib/hooks/` |
+| 8 | `useEffect` after conditional return (Rules of Hooks violation) | **Critical** | `dashboard/layout.tsx` L156 |
+| 9 | `setInterval` polling localStorage at 100ms | High | `dashboard/layout.tsx` L117 |
+| 10 | Mixed abstraction levels in `components/dashboard/` | Low-Medium | `components/dashboard/` |
+| 11 | Admin nav linking to client portal routes | Medium | `sidebar.tsx` L172-186 |
+| 12 | `components/client/` nearly empty, misleading | Low | `components/client/` |
+
+---
+
+## Recommended Immediate Actions (Priority Order)
+
+1. **Fix the Rules of Hooks violation** in `dashboard/layout.tsx` — move the redirect `useEffect` before any conditional returns.
+2. **Replace the localStorage polling interval** with React Context for sidebar collapsed state shared between the global layout and the management portal.
+3. **Consider a route group** `(portal)` to let the management portal opt out of the global dashboard layout cleanly, instead of path-string detection.
+4. **Extract sidebar nav configs** from `sidebar.tsx` into `lib/nav-config.ts`, making the sidebar a dumb renderer.
+5. **Merge or alias the two task card implementations** — designate `management/tasks/` as the source of truth and re-export from `marketing/tasks/`.
+6. **Delete or implement the root-level `hooks/` stubs** — clarify that `lib/hooks/` is canonical.
+7. **Audit the admin → client route links** in the admin sidebar and create proper admin-scoped routes if needed.

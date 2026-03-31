@@ -1,0 +1,42 @@
+{
+  "plugin_root": "C:\\Users\\User\\.claude\\plugins\\deep-implement",
+  "sections_dir": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website\\planning\\04-scheduling-engine\\sections",
+  "target_dir": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website",
+  "state_dir": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website\\planning\\04-scheduling-engine\\implementation",
+  "git_root": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website",
+  "commit_style": "conventional",
+  "test_command": "uv run pytest",
+  "sections": [
+    "section-01-test-utils",
+    "section-02-shared-utils",
+    "section-03-dayschedule-refactor",
+    "section-04-data-hook",
+    "section-05-scheduling-engine",
+    "section-06-calendar-header",
+    "section-07-backlog-pane",
+    "section-08-grid-structure",
+    "section-09-day-column",
+    "section-10-time-block-card",
+    "section-11-portal-page",
+    "section-12-status-bar"
+  ],
+  "sections_state": {
+    "section-01-test-utils": {
+      "status": "complete",
+      "commit_hash": "ce762a76e"
+    },
+    "section-02-shared-utils": {
+      "status": "complete",
+      "commit_hash": "e44980067"
+    }
+  },
+  "pre_commit": {
+    "present": false,
+    "type": "none",
+    "config_file": null,
+    "native_hook": null,
+    "may_modify_files": false,
+    "detected_formatters": []
+  },
+  "created_at": "2026-03-29T01:39:23.853136+00:00"
+}

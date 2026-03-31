@@ -1,0 +1,87 @@
+{
+  "plugin_root": "C:\\Users\\User\\.claude\\plugins\\deep-implement",
+  "sections_dir": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website\\planning\\06-admin-reporting-crm\\sections",
+  "target_dir": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website",
+  "state_dir": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website\\planning\\06-admin-reporting-crm\\implementation",
+  "git_root": "C:\\Users\\User\\Documents\\GitHub\\Montrroase_website",
+  "commit_style": "conventional",
+  "test_command": "uv run pytest",
+  "sections": [
+    "section-01-backend-migrations",
+    "section-02-notification-types",
+    "section-03-client-report-api",
+    "section-04-marketing-plan-api",
+    "section-05-approval-queue-api",
+    "section-06-category-management-api",
+    "section-07-export-api",
+    "section-08-client-detail-hub",
+    "section-09-admin-approvals-page",
+    "section-10-admin-category-page",
+    "section-11-agent-resubmission",
+    "section-12-agent-page-integration",
+    "section-13-tests"
+  ],
+  "sections_state": {
+    "section-01-backend-migrations": {
+      "status": "complete",
+      "commit_hash": "fa37cd6c3"
+    },
+    "section-02-notification-types": {
+      "status": "complete",
+      "commit_hash": "46b045bfd"
+    },
+    "section-03-client-report-api": {
+      "status": "complete",
+      "commit_hash": "c351b04f2"
+    },
+    "section-04-marketing-plan-api": {
+      "status": "complete",
+      "commit_hash": "8ec0ec8eb"
+    },
+    "section-05-approval-queue-api": {
+      "status": "complete",
+      "commit_hash": "3ddfd69f2"
+    },
+    "section-06-category-management-api": {
+      "status": "complete",
+      "commit_hash": "705345ef5"
+    },
+    "section-07-export-api": {
+      "status": "complete",
+      "commit_hash": "f963345ca"
+    },
+    "section-08-client-detail-hub": {
+      "status": "complete",
+      "commit_hash": "9a25d0c27"
+    },
+    "section-09-admin-approvals-page": {
+      "status": "complete",
+      "commit_hash": "9278a3d6d"
+    },
+    "section-10-admin-category-page": {
+      "status": "complete",
+      "commit_hash": "6545ec75b"
+    },
+    "section-11-agent-resubmission": {
+      "status": "complete",
+      "commit_hash": "74feb4041"
+    },
+    "section-12-agent-page-integration": {
+      "status": "complete",
+      "commit_hash": "5bdaa4ead"
+    },
+    "section-13-tests": {
+      "status": "complete",
+      "commit_hash": "8e2f8a7b4"
+    }
+  },
+  "pre_commit": {
+    "present": false,
+    "type": "none",
+    "config_file": null,
+    "native_hook": null,
+    "may_modify_files": false,
+    "detected_formatters": []
+  },
+  "created_at": "2026-03-30T01:11:26.336381+00:00"
+}
