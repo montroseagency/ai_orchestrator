@@ -2,14 +2,14 @@
 CliTeamRunner — Runs the full agent team via a single Claude CLI session.
 
 Uses CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 so the conductor spawns real
-subagents (planner, creative_brain, implementer, reviewer) via the Agent tool.
-Agents communicate through Claude's native mechanism — not Python text-passing.
+subagents (planner, creative_brain, implementer, ui_ux_tester, backend_tester)
+via the Agent tool. Agents communicate through Claude's native mechanism.
 
 How it works:
   1. Python builds --agents JSON from the system prompt files
   2. Python launches one `claude --print` session as the conductor
-  3. The conductor uses its Read/Write tools + spawns subagents internally
-  4. Conductor writes implementation files to disk itself
+  3. The conductor uses its Read/Write/Edit/Bash tools + spawns subagents internally
+  4. Subagents write implementation files to disk directly
   5. Returns a structured JSON summary to Python
 """
 
@@ -17,15 +17,17 @@ import asyncio
 import json
 import os
 import re
-import subprocess
 from pathlib import Path
 
-from src.config import Config, AGENTS_DIR, PROJECT_ROOT, MONTRROASE_ROOT
+from src.config import Config, AGENTS_DIR, PROJECT_ROOT
 
-# Conductor prompt for team mode (different from API mode conductor)
+# Sentinel script for real-time AI-slop detection
+_SENTINEL_SCRIPT = PROJECT_ROOT / "src" / "sentinel.py"
+
+# Conductor prompt for team mode
 _CONDUCTOR_TEAM_PROMPT = AGENTS_DIR / "conductor_team.md"
 
-# Subagent definitions — name → (description, system_prompt_path)
+# Subagent definitions — name -> (description, system_prompt_path)
 _SUBAGENTS: dict[str, tuple[str, Path]] = {
     "planner": (
         "Decomposes tasks into detailed plan.md files. Never writes code.",
@@ -36,7 +38,8 @@ _SUBAGENTS: dict[str, tuple[str, Path]] = {
         AGENTS_DIR / "creative_brain.md",
     ),
     "implementer": (
-        "Writes production-quality code. Returns a JSON object with all file operations.",
+        "Writes production-quality code directly to disk using Write/Edit tools. "
+        "Returns a summary of what was written.",
         AGENTS_DIR / "implementer.md",
     ),
     "ui_ux_tester": (
@@ -51,15 +54,6 @@ _SUBAGENTS: dict[str, tuple[str, Path]] = {
     ),
 }
 
-# CLI model name aliases
-_MODEL_ALIASES = {
-    "claude-haiku-4-5-20251001": "haiku",
-    "claude-haiku-4-5": "haiku",
-    "claude-sonnet-4-5": "sonnet",
-    "claude-opus-4-5": "opus",
-    "claude-opus-4-6": "opus",
-}
-
 
 class CliTeamRunner:
     """
@@ -68,10 +62,10 @@ class CliTeamRunner:
     The conductor is a full Claude Code session that:
     - Reads project files using its Read tool
     - Spawns specialist subagents using the Agent tool
-    - Writes implementation files to disk using its Write tool
-    - Loops the reviewer until PASS or max retries
+    - Implementer writes files to disk directly using Write/Edit tools
+    - Loops the tester until PASS or max retries
 
-    Agents actually communicate through Claude's native subagent mechanism.
+    Agents communicate through Claude's native subagent mechanism.
     """
 
     def __init__(self, log_fn=None):
@@ -92,7 +86,7 @@ class CliTeamRunner:
         for name, (description, prompt_path) in _SUBAGENTS.items():
             prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else description
 
-            # Inject skills into tester prompts for CLI team mode
+            # Inject skills into tester prompts
             if name == "ui_ux_tester":
                 accessibility = self._load_skill("web_accessibility")
                 if accessibility:
@@ -112,9 +106,6 @@ class CliTeamRunner:
             agents[name] = {"description": description, "prompt": prompt}
         return json.dumps(agents)
 
-    def _model_alias(self, model_id: str) -> str:
-        return _MODEL_ALIASES.get(model_id, model_id)
-
     def _handle_stream_event(self, event: dict) -> None:
         """Parse a stream-json event and log meaningful progress to the UI."""
         etype = event.get("type", "")
@@ -122,7 +113,7 @@ class CliTeamRunner:
         if etype == "system" and event.get("subtype") == "init":
             sid = event.get("session_id", "")
             if sid:
-                self.log_fn("🤝 Team", f"Session started: {sid[:16]}...")
+                self.log_fn("Team", f"Session started: {sid[:16]}...")
 
         elif etype == "assistant":
             content = event.get("message", {}).get("content", [])
@@ -131,75 +122,74 @@ class CliTeamRunner:
                     text = block.get("text", "").strip()
                     if not text:
                         continue
-                    # Show first meaningful line (skip trivial one-word replies)
                     first_line = text.split("\n")[0].strip()
                     if len(first_line) > 8:
-                        self.log_fn("🎯 Conductor", first_line[:120])
+                        self.log_fn("Conductor", first_line[:120])
 
                 elif block.get("type") == "tool_use":
                     name = block.get("name", "")
                     inp = block.get("input", {})
                     if name == "Agent":
                         desc = inp.get("description", inp.get("subagent_type", "subagent"))
-                        self.log_fn("🤖 Agent", f"Spawning → {desc[:80]}")
+                        self.log_fn("Agent", f"Spawning -> {desc[:80]}")
                     elif name == "Write":
                         path = inp.get("file_path", "")
-                        self.log_fn("💾 Write", path)
+                        self.log_fn("Write", path)
                     elif name == "Edit":
                         path = inp.get("file_path", "")
-                        self.log_fn("✏️  Edit", path)
+                        self.log_fn("Edit", path)
                     elif name == "Read":
                         path = inp.get("file_path", "")
-                        self.log_fn("📖 Read", path)
+                        self.log_fn("Read", path)
                     elif name == "Bash":
                         cmd_str = inp.get("command", "")[:80]
-                        self.log_fn("⚡ Bash", cmd_str)
-                    elif name == "TodoWrite":
-                        todos = inp.get("todos", [])
-                        in_progress = [t["content"] for t in todos if t.get("status") == "in_progress"]
-                        if in_progress:
-                            self.log_fn("📋 Task", in_progress[0][:80])
+                        self.log_fn("Bash", cmd_str)
 
         elif etype == "tool_result":
-            # Tool results are noisy — only surface errors
             is_error = event.get("is_error", False)
             if is_error:
                 content = event.get("content", "")
                 if isinstance(content, list):
                     content = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
-                self.log_fn("⚠️  Tool Error", str(content)[:120])
+                self.log_fn("Tool Error", str(content)[:120])
 
         elif etype == "result":
             subtype = event.get("subtype", "")
             cost = event.get("total_cost_usd")
             cost_str = f" | cost: ${cost:.4f}" if cost else ""
-            self.log_fn("🤝 Team", f"Session complete ({subtype}){cost_str}")
+            self.log_fn("Team", f"Session complete ({subtype}){cost_str}")
 
-    async def run(self, prompt: str) -> dict:
+    async def run(self, prompt: str, ide_state: str = None) -> dict:
         """
         Run the full team pipeline for a given prompt.
 
         Streams stream-json output from the Claude CLI so progress is visible
-        in real time. Returns a result dict compatible with Conductor.run().
+        in real time. Returns a result dict.
         """
         if not _CONDUCTOR_TEAM_PROMPT.exists():
             raise FileNotFoundError(
                 f"Team conductor prompt not found: {_CONDUCTOR_TEAM_PROMPT}"
             )
 
+        # Optional RAG pre-hook: enrich prompt with historical context
+        enriched_prompt = await self._rag_pre_hook(prompt)
+        
+        # Inject IDE State contextual payload if provided by Antigravity
+        if ide_state:
+            enriched_prompt = f"## IDE Environment Context (Antigravity)\nThis is the current state of the user's IDE:\n{ide_state}\n\n---\n\n{enriched_prompt}"
+
+
         agents_json = self._build_agents_json()
         conductor_prompt = _CONDUCTOR_TEAM_PROMPT.read_text(encoding="utf-8")
-
-        model = self._model_alias(Config.PLANNER_MODEL)
 
         cmd = [
             Config.CLAUDE_CLI_PATH,
             "--print",
             "--verbose",
-            "--model", model,
+            "--model", Config.CLAUDE_CLI_MODEL,
             "--system-prompt", conductor_prompt,
             "--agents", agents_json,
-            "--effort", Config.CLAUDE_CLI_EFFORT_HEAVY,
+            "--effort", Config.CLAUDE_CLI_EFFORT,
             "--output-format", "stream-json",
             "--no-session-persistence",
             "--dangerously-skip-permissions",
@@ -211,7 +201,10 @@ class CliTeamRunner:
             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         }
 
-        self.log_fn("🤝 Team", f"Launching agent team | model: {model} | effort: {Config.CLAUDE_CLI_EFFORT_HEAVY}")
+        # Start the Sentinel — passive background watcher that catches AI-slop in real time
+        sentinel_proc = await self._start_sentinel()
+
+        self.log_fn("Team", f"Launching agent team | model: {Config.CLAUDE_CLI_MODEL} | effort: {Config.CLAUDE_CLI_EFFORT}")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -223,7 +216,7 @@ class CliTeamRunner:
         )
 
         # Send prompt via stdin then close so the process knows input is done
-        proc.stdin.write(prompt.encode())
+        proc.stdin.write(enriched_prompt.encode())
         await proc.stdin.drain()
         proc.stdin.close()
 
@@ -244,9 +237,9 @@ class CliTeamRunner:
                         raw_result = event.get("result", "")
                 except json.JSONDecodeError:
                     if len(line) > 5 and not line.startswith("{"):
-                        self.log_fn("🤝 Team", line[:120])
+                        self.log_fn("Team", line[:120])
 
-        # Stream with a 60-min timeout; clean up the subprocess on any exit
+        # Stream with a 60-min timeout
         try:
             await asyncio.wait_for(_stream(), timeout=3600)
         except asyncio.TimeoutError:
@@ -266,7 +259,19 @@ class CliTeamRunner:
             stderr = stderr_bytes.decode(errors="replace").strip()
             raise RuntimeError(f"Team session failed (exit {proc.returncode}): {stderr}")
 
-        return self._parse_result(raw_result or "\n".join(all_lines))
+        # Stop the Sentinel and collect any warnings it caught
+        sentinel_warnings = await self._stop_sentinel(sentinel_proc)
+
+        result = self._parse_result(raw_result or "\n".join(all_lines))
+
+        if sentinel_warnings:
+            result["sentinel_warnings"] = sentinel_warnings
+            self.log_fn("Sentinel", f"{len(sentinel_warnings)} warning(s) detected during execution")
+
+        # Optional RAG post-hook: index the session
+        await self._rag_post_hook(result, prompt)
+
+        return result
 
     def _parse_result(self, raw: str) -> dict:
         """
@@ -278,7 +283,7 @@ class CliTeamRunner:
         if block_match:
             try:
                 data = json.loads(block_match.group(1))
-                return self._normalize(data, raw)
+                return self._normalize(data)
             except json.JSONDecodeError:
                 pass
 
@@ -294,7 +299,7 @@ class CliTeamRunner:
                     if depth == 0:
                         try:
                             data = json.loads(raw[start : i + 1])
-                            return self._normalize(data, raw)
+                            return self._normalize(data)
                         except json.JSONDecodeError:
                             break
 
@@ -309,27 +314,104 @@ class CliTeamRunner:
             "quality_score": None,
         }
 
-    def _normalize(self, data: dict, raw: str) -> dict:
-        """Normalize conductor output to match Conductor.run() return format."""
+    def _normalize(self, data: dict) -> dict:
+        """Normalize conductor output to a consistent result format."""
         session_id = data.get("session_id", "unknown")
         status = data.get("status", "unknown")
         files_written = data.get("files_written", [])
 
-        # Build files_applied in the same format as FileApplicator
         files_applied = [
             {"path": p, "status": "ok", "operation": "write"}
             for p in files_written
         ]
 
+        session_dir = str(PROJECT_ROOT / "_vibecoding_brain" / "sessions" / session_id)
+        walkthrough_path = str(PROJECT_ROOT / "_vibecoding_brain" / "sessions" / session_id / "walkthrough.md")
+
         return {
             "session_id": session_id,
             "status": status,
             "files_applied": files_applied,
-            "walkthrough_path": None,
-            "session_dir": str(PROJECT_ROOT / "_vibecoding_brain" / "sessions" / session_id),
+            "walkthrough_path": walkthrough_path if (PROJECT_ROOT / "_vibecoding_brain" / "sessions" / session_id / "walkthrough.md").exists() else None,
+            "session_dir": session_dir,
             "notes": [data.get("summary", "")],
-            "quality_score": None,
-            # Extra team-mode fields
+            "quality_score": data.get("quality_assessment"),
             "iterations": data.get("iterations", 0),
             "review_verdict": data.get("review_verdict", ""),
         }
+
+    async def _start_sentinel(self) -> asyncio.subprocess.Process | None:
+        """Start the Sentinel as a background process to catch AI-slop in real time."""
+        if not _SENTINEL_SCRIPT.exists():
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "python", str(_SENTINEL_SCRIPT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=str(PROJECT_ROOT),
+            )
+            self.log_fn("Sentinel", "Background watcher started")
+            return proc
+        except Exception:
+            return None
+
+    async def _stop_sentinel(self, proc: asyncio.subprocess.Process | None) -> list[str]:
+        """Stop the Sentinel and return any warnings it emitted."""
+        if proc is None:
+            return []
+        try:
+            proc.terminate()
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+            lines = stdout.decode(errors="replace").strip().splitlines()
+            return [l for l in lines if "[Sentinel]" in l]
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return []
+
+    async def _rag_pre_hook(self, prompt: str) -> str:
+        """Enrich prompt with historical context from session memory if enabled."""
+        if not Config.ENABLE_HISTORICAL_CONTEXT:
+            return prompt
+
+        try:
+            from src.rag_mcp.session_memory import search_similar_sessions, format_context
+
+            sessions = search_similar_sessions(
+                query=prompt,
+                max_results=Config.MAX_SIMILAR_SESSIONS,
+                min_relevance=Config.MIN_RELEVANCE_THRESHOLD,
+            )
+
+            if not sessions:
+                return prompt
+
+            formatted = format_context(sessions, budget_tokens=100)
+            if formatted:
+                return f"## Historical Context (from similar past tasks)\n{formatted}\n\n---\n\n{prompt}"
+        except Exception:
+            pass
+
+        return prompt
+
+    async def _rag_post_hook(self, result: dict, prompt: str) -> None:
+        """Index the completed session into session memory if enabled."""
+        if not Config.ENABLE_HISTORICAL_CONTEXT:
+            return
+
+        try:
+            from src.rag_mcp.session_memory import index_session
+
+            index_session(
+                session_id=result.get("session_id", "unknown"),
+                prompt=prompt,
+                outcome=result.get("status", "unknown"),
+                summary=result.get("notes", [""])[0] if result.get("notes") else "",
+                files_touched=[f.get("path", "") for f in result.get("files_applied", []) if f.get("path")],
+                iterations=result.get("iterations", 0),
+            )
+        except Exception:
+            pass

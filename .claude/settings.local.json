@@ -22,7 +22,8 @@
       "Bash(python3 -m py_compile src/improvement/metrics.py)",
       "Bash(claude --print --tools \"\" \"say hi\")",
       "Bash(ls -td /Users/MacOs/ai_orchestrator/_vibecoding_brain/sessions/make-a-simple-hello-world-*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(ls -la /c/Users/User/Documents/GitHub/agentic_workflow/src/*.py)"
     ]
   }
 }

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "codebase-rag": {
+      "command": "python",
+      "args": ["src/rag_mcp/server.py"]
+    },
+    "ide-tools": {
+      "command": "python",
+      "args": ["src/ide_mcp_server.py"]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-sequential-thinking"]
+    }
+  }
+}

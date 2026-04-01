@@ -1,3 +1,7 @@
 # Vibe Coding Team — Python Dependencies
-anthropic>=0.40.0
-rich>=13.7.0
+watchdog>=4.0.0
+# The thin launcher (vibe.py + src/) uses only the Python standard library.
+# Optional session memory (cross-session learning) requires:
+#   chromadb>=0.5.0
+#   sentence-transformers>=3.0.0
+# See also: src/rag_mcp/requirements.txt (for the MCP codebase search server)
