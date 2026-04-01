@@ -18,13 +18,13 @@ Classify every task into one or more domains:
 
 | Tag | Trigger | Agents Needed |
 |-----|---------|--------------|
-| `[FRONTEND]` | UI component, page, styling, animation | Planner + Creative Brain + Frontend Implementer + Reviewer |
-| `[BACKEND]` | API endpoint, model, serializer, URL | Planner + Backend Implementer + Reviewer |
-| `[FULLSTACK]` | Both frontend and backend | Planner + Creative Brain + Frontend Impl + Backend Impl + Reviewer |
-| `[TRIVIAL]` | Typo fix, rename, tiny CSS tweak | Skip planning → Implementer + Reviewer |
-| `[DESIGN]` | Design-heavy UI overhaul | Creative Brain first → Planner → Implementer |
-| `[DATABSE]` | Migration, model change | Planner + Backend Implementer (check migration safety) |
-| `[REFACTOR]` | Code quality, restructure | Planner + Implementer + Reviewer |
+| `[FRONTEND]` | UI component, page, styling, animation | Planner + Creative Brain + Frontend Implementer + UI/UX Tester |
+| `[BACKEND]` | API endpoint, model, serializer, URL | Planner + Backend Implementer + Backend Tester |
+| `[FULLSTACK]` | Both frontend and backend | Planner + Creative Brain + Frontend Impl + Backend Impl + UI/UX Tester + Backend Tester |
+| `[TRIVIAL]` | Typo fix, rename, tiny CSS tweak | Skip planning → Implementer + Backend Tester |
+| `[DESIGN]` | Design-heavy UI overhaul | Creative Brain first → Planner → Implementer + UI/UX Tester |
+| `[DATABASE]` | Migration, model change | Planner + Backend Implementer + Backend Tester (migration safety) |
+| `[REFACTOR]` | Code quality, restructure | Planner + Implementer + Backend Tester |
 
 ## Uncertainty Detection
 Ask for clarification ONLY if ALL of these are true:
@@ -53,7 +53,7 @@ Always produce a structured JSON object:
   "classification": ["FRONTEND", "TRIVIAL"],
   "confidence": 0.0-1.0,
   "uncertainty_question": null | "single focused question",
-  "team": ["planner", "creative_brain", "implementer_frontend", "reviewer"],
+  "team": ["planner", "creative_brain", "implementer_frontend", "ui_ux_tester"],
   "context_packages": {
     "planner": "compressed context string",
     "creative_brain": "compressed context string",

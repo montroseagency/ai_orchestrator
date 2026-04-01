@@ -1,16 +1,19 @@
 """
 Context Builder — Assembles smart, token-efficient context packages for each agent.
 Reads AGENTS.md, project index, and specific files — never the full codebase.
+Supports RAG-based historical context injection for cross-session learning.
 """
 
 from pathlib import Path
-from src.config import BRAIN_ROOT, MONTRROASE_ROOT, AGENTS_DIR, CONTEXT_DIR
+from typing import Optional
+from src.config import BRAIN_ROOT, MONTRROASE_ROOT, AGENTS_DIR, CONTEXT_DIR, Config
 
 
 class ContextBuilder:
     """
     Assembles lean context packages for each agent.
     Each package contains only what that agent needs to do its job.
+    Supports historical context injection from RAG for cross-session learning.
     """
 
     def __init__(self):
@@ -18,6 +21,10 @@ class ContextBuilder:
         self._project_index: str | None = None
         self._design_system: str | None = None
         self._tech_stack: str | None = None
+
+        # RAG components (lazy-loaded)
+        self._retriever = None
+        self._budget_enforcer = None
 
     # ─────────────────────────────────────────
     # Base context loaders (cached)
@@ -162,6 +169,97 @@ class ContextBuilder:
 
         return "\n\n---\n\n".join(sections)
 
+    def load_skill(self, skill_name: str) -> str:
+        """Load a skill file from _vibecoding_brain/agents/skills/."""
+        skill_path = AGENTS_DIR / "skills" / f"{skill_name}.md"
+        return skill_path.read_text(encoding="utf-8") if skill_path.exists() else ""
+
+    def _format_impl_files(self, implementation_files: list[dict]) -> str:
+        """Format implementation files for tester/reviewer context."""
+        return "\n".join(
+            f"\n{'='*60}\n"
+            f"📄 {f['operation']}: {f['path']}\n"
+            f"{'='*60}\n"
+            f"Summary: {f.get('change_summary', 'No summary')}\n\n"
+            f"{f.get('content', '[DELETED]')}"
+            for f in implementation_files
+        )
+
+    def for_ui_ux_tester(
+        self,
+        plan_content: str,
+        design_brief: str | None,
+        implementation_files: list[dict],
+        retry_count: int = 0,
+    ) -> tuple[str, str]:
+        """
+        Context package + injected skills for the UI/UX Tester agent.
+
+        Returns:
+            (context_package, extra_system) where extra_system contains skills to inject.
+        """
+        impl_section = self._format_impl_files(implementation_files)
+
+        sections = [
+            f"# Implementation to Test\n{impl_section}",
+            f"# Original Plan (Acceptance Criteria)\n{plan_content}",
+            f"# Project Rules (AGENTS.md)\n{self.agents_md()}",
+        ]
+
+        if design_brief:
+            sections.append(f"# Design Brief (Visual Spec)\n{design_brief}")
+
+        if retry_count > 0:
+            sections.insert(
+                0,
+                f"# Context\nThis is test attempt #{retry_count + 1}. "
+                f"Focus on whether the CRITICAL issues from your last report are now resolved.",
+            )
+
+        context = "\n\n---\n\n".join(sections)
+
+        # Build skills string — web_accessibility always; playwright if server configured
+        skills = [self.load_skill("web_accessibility")]
+        if Config.PLAYWRIGHT_SERVER_URL:
+            playwright_skill = self.load_skill("playwright_testing").replace(
+                "{PLAYWRIGHT_SERVER_URL}", Config.PLAYWRIGHT_SERVER_URL
+            )
+            skills.append(playwright_skill)
+
+        extra_system = "\n\n---\n\n".join(s for s in skills if s)
+        return context, extra_system
+
+    def for_backend_tester(
+        self,
+        plan_content: str,
+        implementation_files: list[dict],
+        retry_count: int = 0,
+    ) -> tuple[str, str]:
+        """
+        Context package + injected skills for the Backend Tester agent.
+
+        Returns:
+            (context_package, extra_system) where extra_system contains skills to inject.
+        """
+        impl_section = self._format_impl_files(implementation_files)
+
+        sections = [
+            f"# Implementation to Test\n{impl_section}",
+            f"# Original Plan (Acceptance Criteria)\n{plan_content}",
+            f"# Project Rules (AGENTS.md)\n{self.agents_md()}",
+        ]
+
+        if retry_count > 0:
+            sections.insert(
+                0,
+                f"# Context\nThis is test attempt #{retry_count + 1}. "
+                f"Focus on whether the CRITICAL issues from your last report are now resolved.",
+            )
+
+        context = "\n\n---\n\n".join(sections)
+        extra_system = self.load_skill("code_review")
+        return context, extra_system
+
     def for_reviewer(
         self,
         plan_content: str,
@@ -170,18 +268,10 @@ class ContextBuilder:
         retry_count: int = 0,
     ) -> str:
         """
-        Context package for the Reviewer agent.
-        Gets diffs/new file contents + original plan.
+        Legacy context package for the Reviewer agent (kept for API mode compatibility).
+        Prefer for_ui_ux_tester() / for_backend_tester() in new code.
         """
-        # Format implementation output as "diffs"
-        impl_section = "\n".join(
-            f"\n{'='*60}\n"
-            f"📄 {f['operation']}: {f['path']}\n"
-            f"{'='*60}\n"
-            f"Summary: {f.get('change_summary', 'No summary')}\n\n"
-            f"{f.get('content', '[DELETED]')}"
-            for f in implementation_files
-        )
+        impl_section = self._format_impl_files(implementation_files)
 
         sections = [
             f"# Implementation to Review\n{impl_section}",
@@ -223,3 +313,164 @@ class ContextBuilder:
         # Extract backtick-quoted paths
         paths = re.findall(r"`([^`]+\.[a-zA-Z]{1,6})`", section_match.group(1))
         return paths
+
+    # ─────────────────────────────────────────────────────────────────
+    # RAG-based Historical Context
+    # ─────────────────────────────────────────────────────────────────
+
+    @property
+    def retriever(self):
+        """Lazy-load ProgressiveRetriever."""
+        if self._retriever is None and self._rag_enabled():
+            try:
+                from src.rag import ProgressiveRetriever
+                self._retriever = ProgressiveRetriever()
+            except ImportError:
+                pass
+        return self._retriever
+
+    @property
+    def budget_enforcer(self):
+        """Lazy-load BudgetEnforcer."""
+        if self._budget_enforcer is None and self._rag_enabled():
+            try:
+                from src.rag import BudgetEnforcer
+                self._budget_enforcer = BudgetEnforcer()
+            except ImportError:
+                pass
+        return self._budget_enforcer
+
+    def _rag_enabled(self) -> bool:
+        """Check if RAG is enabled in configuration."""
+        return getattr(Config, "ENABLE_HISTORICAL_CONTEXT", False)
+
+    async def with_historical_context(
+        self,
+        prompt: str,
+        base_context: str,
+        agent_type: str,
+    ) -> str:
+        """
+        Enhance base context with relevant historical context from RAG.
+
+        Args:
+            prompt: The user's task prompt (used for similarity search)
+            base_context: The base context package for the agent
+            agent_type: Type of agent (planner, implementer, etc.)
+
+        Returns:
+            Enhanced context with historical information, or base_context if RAG unavailable
+        """
+        if not self._rag_enabled() or self.retriever is None:
+            return base_context
+
+        try:
+            # Retrieve relevant historical context
+            retrieved = self.retriever.get_context(
+                query=prompt,
+                agent_type=agent_type,
+                include_lessons=True,
+            )
+
+            # Format for context injection
+            historical_section = self.retriever.format_for_context(retrieved, agent_type)
+
+            if not historical_section:
+                return base_context
+
+            # Inject historical context at appropriate location
+            return self._inject_historical_section(base_context, historical_section, agent_type)
+
+        except Exception:
+            # Graceful degradation - return base context if RAG fails
+            return base_context
+
+    async def with_lesson_injections(
+        self,
+        context: str,
+        issue_types: list[str],
+        agent_type: str,
+    ) -> str:
+        """
+        Inject relevant lessons for specific issue types into context.
+
+        Useful when reviewer finds issues - inject lessons about how
+        to fix those specific issue types.
+
+        Args:
+            context: Current context to enhance
+            issue_types: List of issue types to find lessons for
+            agent_type: Agent type for budget enforcement
+
+        Returns:
+            Context enhanced with relevant lessons
+        """
+        if not self._rag_enabled() or self.retriever is None:
+            return context
+
+        if not issue_types:
+            return context
+
+        try:
+            from src.rag import get_rag_client
+
+            rag = get_rag_client()
+            lessons_parts = []
+
+            for issue_type in issue_types[:3]:  # Limit to 3 issue types
+                lessons = rag.search_lessons(issue_type, n=2)
+                for lesson in lessons:
+                    fix = lesson.get("fix", "")
+                    if fix:
+                        lessons_parts.append(f"- **{issue_type}**: {fix}")
+
+            if not lessons_parts:
+                return context
+
+            # Apply budget enforcement
+            lessons_section = "\n".join(lessons_parts)
+            if self.budget_enforcer:
+                lessons_section = self.budget_enforcer.enforce(agent_type, lessons_section)
+
+            # Inject lessons section
+            lessons_md = f"\n\n## Relevant Lessons from Past Tasks\n{lessons_section}"
+            return context + lessons_md
+
+        except Exception:
+            return context
+
+    def _inject_historical_section(
+        self,
+        base_context: str,
+        historical_section: str,
+        agent_type: str,
+    ) -> str:
+        """
+        Inject historical section at appropriate location in context.
+
+        Places historical context after the main task description
+        but before detailed instructions.
+        """
+        # Look for a good injection point (after "# Task" or "# User Request")
+        injection_markers = [
+            "# Task\n",
+            "# User Request\n",
+            "---\n",
+        ]
+
+        for marker in injection_markers:
+            if marker in base_context:
+                # Find end of first section after marker
+                marker_pos = base_context.find(marker)
+                next_section = base_context.find("\n#", marker_pos + len(marker))
+
+                if next_section != -1:
+                    # Inject before next section
+                    return (
+                        base_context[:next_section] +
+                        f"\n\n## Historical Context\n{historical_section}\n" +
+                        base_context[next_section:]
+                    )
+
+        # Fallback: append at end
+        return base_context + f"\n\n## Historical Context\n{historical_section}"

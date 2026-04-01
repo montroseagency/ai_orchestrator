@@ -35,6 +35,7 @@ class PlannerAgent(BaseAgent):
 
         return await self.call(
             user_message=user_message,
-            temperature=0.3,  # Low temp — we want consistent, deterministic decomposition
+            temperature=0.3,  # Ignored when thinking_tokens > 0 (forced to 1.0)
             max_tokens=4096,
+            thinking_tokens=Config.PLANNER_THINKING_TOKENS,
         )

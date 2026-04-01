@@ -5,7 +5,24 @@
       "Bash(grep -r \"next/image\\\\|Image\" C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient --include=*.tsx)",
       "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/components/scheduler -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
       "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/components -type f -name *essaging* -o -name *essage*)",
-      "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/app/dashboard -type f -name *notes* -o -path */notes/*)"
+      "Bash(find C:UsersUserDocumentsGitHubagentic_workflowMontrroase_websiteclient/app/dashboard -type f -name *notes* -o -path */notes/*)",
+      "Skill(update-config)",
+      "Read(//Users/MacOs/**)",
+      "Bash(claude mcp:*)",
+      "mcp__tavily-mcp__tavily_research",
+      "WebSearch",
+      "WebFetch(domain:addyosmani.com)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:logicstar.ai)",
+      "mcp__tavily-mcp__tavily_search",
+      "Bash(python3 -m py_compile src/improvement/self_healer.py)",
+      "Bash(python3 -m py_compile src/improvement/quality_scorer.py)",
+      "Bash(python3 -m py_compile src/improvement/reflection.py)",
+      "Bash(python3 -m py_compile src/improvement/stuck_detector.py)",
+      "Bash(python3 -m py_compile src/improvement/metrics.py)",
+      "Bash(claude --print --tools \"\" \"say hi\")",
+      "Bash(ls -td /Users/MacOs/ai_orchestrator/_vibecoding_brain/sessions/make-a-simple-hello-world-*)",
+      "Bash(python3:*)"
     ]
   }
 }

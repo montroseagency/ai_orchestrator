@@ -117,14 +117,22 @@ class VibeCliApp:
         console.print(Rule(style="dim"))
         console.print()
 
-        # Run the pipeline
-        conductor = Conductor(ui=self, dry_run=dry_run)
-
+        # Run the pipeline — multi-terminal, CLI team, or API mode
         try:
-            result = await conductor.run(
-                prompt=prompt,
-                ask_user_fn=self._ask_user,
-            )
+            if Config.MULTI_TERMINAL:
+                from src.multi_terminal_runner import MultiTerminalRunner
+                runner = MultiTerminalRunner(log_fn=self.log)
+                result = await runner.run(prompt)
+            elif Config.USE_CLAUDE_CLI:
+                from src.team_runner import CliTeamRunner
+                runner = CliTeamRunner(log_fn=self.log)
+                result = await runner.run(prompt)
+            else:
+                conductor = Conductor(ui=self, dry_run=dry_run)
+                result = await conductor.run(
+                    prompt=prompt,
+                    ask_user_fn=self._ask_user,
+                )
             self._print_result(result)
         except KeyboardInterrupt:
             console.print("\n\n[bold red]Interrupted.[/bold red] Session state saved.")
