@@ -127,7 +127,7 @@ Common patterns:
 ```
 
 ## Icon Library
-Using `lucide-react` (v0.552). Always prefer icons from this library.
+Using `@phosphor-icons/react`. Always use Phosphor icons — NOT Lucide.
 
 ## Design Principles
 1. **Density:** Information-dense layouts. Minimal whitespace waste. SaaS power-user aesthetic.

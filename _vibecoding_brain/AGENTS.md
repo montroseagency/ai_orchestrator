@@ -38,6 +38,7 @@
 - Component classes: `.card-surface`, `.badge-success/warning/error/info`, `.surface-outlined`
 
 ## Context Index (read these when needed)
+- `context/montrroase_guide.md` — Business domain, user roles, features, data flows, infrastructure
 - `context/design_system.md` — Full design tokens, component patterns, animation guide
 - `context/tech_stack.md` — Detailed stack decisions, testing, deployment
 - `context/project_index.md` — Every key file with one-line description

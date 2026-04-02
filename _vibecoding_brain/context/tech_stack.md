@@ -9,7 +9,7 @@
 - **tailwindcss** ^4 — utility-first CSS (v4, with `@theme` syntax in globals.css)
 - **framer-motion** ^11 — animations
 - **@tanstack/react-query** ^5 — server state management
-- **lucide-react** ^0.552 — icon library
+- **@phosphor-icons/react** — icon library (legacy: lucide-react exists but all new code MUST use Phosphor)
 - **@dnd-kit/core** + sortable — drag and drop
 - **socket.io-client** ^4.8 — real-time messaging/notifications
 - **recharts** ^2 — charts/analytics

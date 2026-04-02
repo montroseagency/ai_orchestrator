@@ -72,3 +72,12 @@
 | `server/api/storage.py` | Custom storage backend |
 | `server/config/` | Django settings, wsgi, asgi |
 | `server/manage.py` | Django management entry point |
+
+## Orchestrator — Context Docs
+| File | Purpose |
+|------|---------|
+| `_vibecoding_brain/context/montrroase_guide.md` | Business domain, roles, features, data flows, infrastructure |
+| `_vibecoding_brain/context/design_system.md` | Design tokens, component patterns, animation guide |
+| `_vibecoding_brain/context/tech_stack.md` | Stack decisions, testing, deployment |
+| `_vibecoding_brain/context/project_index.md` | This file — key files with descriptions |
+| `_vibecoding_brain/AGENTS.md` | Project constitution — stack, rules, design system summary |

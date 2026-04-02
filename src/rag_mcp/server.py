@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-RAG MCP Server — Montrroase codebase semantic search.
+RAG MCP Server — Montrroase codebase semantic search + session memory.
 
-Exposes six tools to Claude Code:
-  search_codebase     — semantic search with relevance threshold + MMR dedup
-  search_multi        — batch N queries in one round-trip, merged + deduped
-  search_symbol       — exact lookup by function/class name in index metadata
-  get_file            — read a specific file with line numbers
-  list_indexed_files  — browse what's in the index
-  rag_status          — chunk count, last indexed time
+Exposes eight tools to Claude Code:
+  search_codebase       — semantic search with relevance threshold + MMR dedup
+  search_multi          — batch N queries in one round-trip, merged + deduped
+  search_symbol         — exact lookup by function/class name in index metadata
+  get_file              — read a specific file with line numbers
+  list_indexed_files    — browse what's in the index
+  rag_status            — chunk count, last indexed time
+  search_past_sessions  — find similar past task sessions for context
+  index_session         — store a completed session for future reference
 
 Transport: stdio (Claude Code connects at startup)
 """
 from __future__ import annotations
 
 import asyncio
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,18 +28,31 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 from sentence_transformers import SentenceTransformer
 
+# Try tiktoken for accurate token counting in session memory budget
+try:
+    import tiktoken
+    _TIKTOKEN_AVAILABLE = True
+except ImportError:
+    _TIKTOKEN_AVAILABLE = False
+
 # ── Config ────────────────────────────────────────────────────────────────────
-PROJECT_ROOT    = Path(__file__).parent.parent.parent.resolve() / "Montrroase_website"
-DB_PATH         = Path(__file__).parent / "chroma_db"
+PROJECT_ROOT      = Path(__file__).parent.parent.parent.resolve() / "Montrroase_website"
+ORCHESTRATOR_ROOT = Path(__file__).parent.parent.parent.resolve()
+DB_PATH           = Path(__file__).parent / "chroma_db"
 COLLECTION      = "codebase"
+SESSION_COLLECTION = "sessions"
 MODEL_NAME         = "nomic-ai/nomic-embed-text-v1.5"
 EMBED_QUERY_PREFIX = "search_query: "   # nomic task prefix for queries
+EMBED_DOC_PREFIX   = "search_document: "  # nomic task prefix for indexing
 
 # Search quality controls
-# With cosine distance: relevance = (1 - dist) * 100 is exact cosine similarity %.
-# 25% cosine similarity is a reasonable floor — below that the match is coincidental.
 MIN_RELEVANCE   = 0.25   # drop chunks below 25% cosine similarity
 MAX_PER_FILE    = 2      # MMR: at most 2 chunks per file per query result
+
+# Session memory controls
+SESSION_MIN_RELEVANCE = 0.50  # stricter threshold for session matches
+SESSION_BUDGET_TOKENS = 300   # max tokens for formatted session context
+CHARS_PER_TOKEN_ESTIMATE = 4  # fallback token estimation
 
 # ── Lazy globals ──────────────────────────────────────────────────────────────
 _model: SentenceTransformer | None      = None
@@ -71,6 +88,51 @@ def collection():
         COLLECTION,
         metadata={"hnsw:space": "cosine"},
     )
+
+
+def session_collection():
+    """Get or create the sessions collection for cross-session memory."""
+    return _chroma().get_or_create_collection(
+        SESSION_COLLECTION,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
+# ── Token budget helpers ─────────────────────────────────────────────────────
+
+def _count_tokens(text: str) -> int:
+    """Count tokens using tiktoken if available, else estimate ~4 chars/token."""
+    if not text:
+        return 0
+    if _TIKTOKEN_AVAILABLE:
+        try:
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(text))
+        except Exception:
+            pass
+    return len(text) // CHARS_PER_TOKEN_ESTIMATE
+
+
+def _truncate_to_budget(text: str, budget: int) -> str:
+    """Truncate text to fit within token budget, preserving complete sentences."""
+    if _count_tokens(text) <= budget:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    result = []
+    total = 0
+    for s in sentences:
+        t = _count_tokens(s)
+        if total + t > budget:
+            break
+        result.append(s)
+        total += t
+    if not result:
+        char_limit = budget * CHARS_PER_TOKEN_ESTIMATE
+        return text[:char_limit].rsplit(" ", 1)[0] + "..."
+    out = " ".join(result)
+    if len(result) < len(sentences):
+        out += "..."
+    return out
 
 
 # ── MCP server ────────────────────────────────────────────────────────────────
@@ -212,6 +274,69 @@ async def list_tools() -> list[Tool]:
             description="Show RAG index status: chunk count, last indexed timestamp, model info.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        Tool(
+            name="search_past_sessions",
+            description=(
+                "Search past task sessions for similar work and lessons learned. "
+                "Returns session outcomes, summaries, and files touched. "
+                "Use at the start of a task to find relevant historical context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language description of the current task",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum sessions to return (default 5)",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="index_session",
+            description=(
+                "Store a completed agent team session for future reference. "
+                "Call this at the end of the pipeline (Step 9) to index the session outcome."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Unique session identifier (kebab-case slug)",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Original user task prompt",
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "description": "Session outcome: 'pass', 'fail', or 'stuck'",
+                        "enum": ["pass", "fail", "stuck"],
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief summary of what was implemented",
+                    },
+                    "files_touched": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of file paths that were created or modified",
+                    },
+                    "iterations": {
+                        "type": "integer",
+                        "description": "Number of test-fix iterations",
+                        "default": 0,
+                    },
+                },
+                "required": ["session_id", "prompt", "outcome", "summary", "files_touched"],
+            },
+        ),
     ]
 
 
@@ -229,6 +354,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return await _list_files(arguments)
     if name == "rag_status":
         return await _status()
+    if name == "search_past_sessions":
+        return await _search_past_sessions(arguments)
+    if name == "index_session":
+        return await _index_session(arguments)
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
@@ -424,7 +553,11 @@ async def _get_file(args: dict) -> list[TextContent]:
     path       = args["path"].lstrip("/").replace("\\", "/")
     start_line = args.get("start_line")
     end_line   = args.get("end_line")
-    full_path  = PROJECT_ROOT / path
+    # Multi-root resolution: _orchestrator/ prefix → orchestrator root, else project root
+    if path.startswith("_orchestrator/"):
+        full_path = ORCHESTRATOR_ROOT / path[len("_orchestrator/"):]
+    else:
+        full_path = PROJECT_ROOT / path
 
     if not full_path.exists():
         return [TextContent(type="text", text=f"File not found: `{path}`")]
@@ -482,6 +615,100 @@ async def _status() -> list[TextContent]:
         f"- Project root   : {PROJECT_ROOT}"
     )
     return [TextContent(type="text", text=text)]
+
+
+# ── Session memory tools ──────────────────────────────────────────────────────
+
+async def _search_past_sessions(args: dict) -> list[TextContent]:
+    """Find similar past sessions by semantic search."""
+    query       = args["query"]
+    max_results = min(int(args.get("max_results", 5)), 10)
+
+    try:
+        col = session_collection()
+        if col.count() == 0:
+            return [TextContent(type="text", text="No past sessions indexed yet.")]
+
+        embedding = model().encode([EMBED_QUERY_PREFIX + query]).tolist()
+
+        results = col.query(
+            query_embeddings=embedding,
+            n_results=min(max_results * 2, col.count()),
+            include=["metadatas", "distances"],
+        )
+
+        sessions = []
+        if results["metadatas"] and results["metadatas"][0]:
+            for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
+                relevance = 1 - dist
+                if relevance < SESSION_MIN_RELEVANCE:
+                    continue
+                sessions.append({
+                    "session_id": meta.get("session_id", ""),
+                    "prompt": meta.get("prompt", ""),
+                    "outcome": meta.get("outcome", ""),
+                    "summary": meta.get("summary", ""),
+                    "files": [f for f in meta.get("files_touched", "").split(",") if f],
+                    "iterations": meta.get("iterations", 0),
+                    "relevance": relevance,
+                })
+                if len(sessions) >= max_results:
+                    break
+
+        if not sessions:
+            return [TextContent(type="text", text="No similar past sessions found.")]
+
+        parts = []
+        for s in sessions:
+            entry = f"- **{s['session_id']}** ({s['outcome']}, {s['relevance']:.0%} match)"
+            if s["summary"]:
+                entry += f": {s['summary']}"
+            if s["files"]:
+                entry += f"\n  Files: {', '.join(s['files'][:5])}"
+            parts.append(entry)
+
+        text = f"**{len(sessions)} similar past sessions:**\n\n" + "\n".join(parts)
+        text = _truncate_to_budget(text, SESSION_BUDGET_TOKENS)
+        return [TextContent(type="text", text=text)]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Session search error: {e}")]
+
+
+async def _index_session(args: dict) -> list[TextContent]:
+    """Store a completed session for future retrieval."""
+    session_id    = args["session_id"]
+    prompt        = args["prompt"]
+    outcome       = args["outcome"]
+    summary       = args["summary"]
+    files_touched = args.get("files_touched", [])
+    iterations    = int(args.get("iterations", 0))
+
+    try:
+        col = session_collection()
+        embed_text = EMBED_DOC_PREFIX + f"{prompt}\n\n{summary}"
+        embedding = model().encode([embed_text]).tolist()
+
+        metadata = {
+            "session_id": session_id,
+            "prompt": prompt[:500],
+            "outcome": outcome,
+            "summary": summary[:600],
+            "files_touched": ",".join(files_touched[:20]),
+            "iterations": iterations,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        col.upsert(
+            ids=[session_id],
+            embeddings=embedding,
+            documents=[embed_text],
+            metadatas=[metadata],
+        )
+        return [TextContent(type="text", text=f"Session `{session_id}` indexed ({outcome}, {len(files_touched)} files).")]
+
+    except Exception as e:
+        return [TextContent(type="text", text=f"Session index error: {e}")]
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

@@ -44,12 +44,17 @@ CHUNK_SIZE     = 80   # target lines per chunk (line span, not text lines)
 CHUNK_OVERLAP  = 15   # overlap for line-based fallback on large blocks
 BATCH_SIZE     = 8
 
-INCLUDE_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".css"}
+INCLUDE_EXTENSIONS = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".css",
+    ".md", ".json", ".yaml", ".yml", ".toml",
+    ".conf", ".cfg", ".ini", ".html",
+}
 
 EXCLUDE_DIRS = {
     "node_modules", ".git", "dist", "build", ".next", "__pycache__",
     "migrations", ".venv", "venv", "env", "chroma_db",
     "monitoring", "rabbitmq", "coverage", ".pytest_cache", "staticfiles",
+    "sessions",
 }
 
 EXCLUDE_FILES = {
@@ -60,6 +65,9 @@ EXCLUDE_FILES = {
 EXT_LANG = {
     ".py": "python", ".ts": "typescript", ".tsx": "tsx",
     ".js": "javascript", ".jsx": "jsx", ".css": "css",
+    ".md": "markdown", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
+    ".toml": "toml", ".conf": "conf", ".cfg": "conf", ".ini": "ini",
+    ".html": "html",
 }
 
 # Matches top-level exports in TS/TSX/JS files
@@ -200,6 +208,81 @@ def extract_ts_blocks(lines: list[str]) -> list[tuple[int, int, str]]:
     return blocks
 
 
+# Matches ATX headings in markdown (# through ######)
+MD_HEADING_RE = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
+
+
+def extract_md_sections(lines: list[str]) -> list[tuple[int, int, str]]:
+    """
+    Split markdown into sections by headings. Each heading starts a section
+    that ends when the next heading of equal or higher level appears (or EOF).
+    Returns (start_0idx, end_0idx, heading_text) tuples.
+    Heading text becomes the symbol name in metadata for search_symbol.
+    """
+    headings: list[tuple[int, int, str]] = []  # (line_idx, level, title)
+    for i, line in enumerate(lines):
+        m = MD_HEADING_RE.match(line)
+        if m:
+            level = len(m.group(1))
+            title = m.group(2).strip()
+            headings.append((i, level, title))
+
+    if not headings:
+        return []
+
+    blocks = []
+    for idx, (line_idx, level, title) in enumerate(headings):
+        # Section ends just before the next heading of equal or higher level, or EOF
+        end = len(lines) - 1
+        for next_idx in range(idx + 1, len(headings)):
+            if headings[next_idx][1] <= level:
+                end = headings[next_idx][0] - 1
+                break
+            # If next heading is a sub-heading, keep going
+            if next_idx == len(headings) - 1:
+                end = len(lines) - 1
+
+        # Strip trailing blank lines
+        while end > line_idx and not lines[end].strip():
+            end -= 1
+
+        blocks.append((line_idx, end, title))
+
+    return blocks
+
+
+# ── Multi-root indexing ───────────────────────────────────────────────────────
+
+ORCHESTRATOR_ROOT = Path(__file__).parent.parent.parent.resolve()
+
+# Whitelist of orchestrator paths to index (relative to ORCHESTRATOR_ROOT)
+ORCHESTRATOR_INCLUDE = [
+    "_vibecoding_brain/context",
+    "_vibecoding_brain/AGENTS.md",
+    "_vibecoding_brain/problems/rules.md",
+    "CLAUDE.md",
+    "DOCUMENTATION.md",
+]
+
+
+def iter_orchestrator_files() -> Generator[tuple[Path, str], None, None]:
+    """
+    Yield (abs_path, prefixed_rel_path) for whitelisted orchestrator files.
+    Paths are prefixed with '_orchestrator/' in the relative path.
+    """
+    for include in ORCHESTRATOR_INCLUDE:
+        target = ORCHESTRATOR_ROOT / include
+        if target.is_file():
+            if target.suffix in INCLUDE_EXTENSIONS:
+                rel = str(target.relative_to(ORCHESTRATOR_ROOT)).replace("\\", "/")
+                yield target, f"_orchestrator/{rel}"
+        elif target.is_dir():
+            for ext in INCLUDE_EXTENSIONS:
+                for path in sorted(target.rglob(f"*{ext}")):
+                    rel = str(path.relative_to(ORCHESTRATOR_ROOT)).replace("\\", "/")
+                    yield path, f"_orchestrator/{rel}"
+
+
 # ── Chunk helpers ──────────────────────────────────────────────────────────────
 
 def _make_chunk(
@@ -273,6 +356,8 @@ def smart_chunk(lines: list[str], rel_path: str, language: str) -> list[dict]:
         blocks = extract_python_blocks(lines)
     elif language in ("typescript", "tsx", "javascript", "jsx"):
         blocks = extract_ts_blocks(lines)
+    elif language == "markdown":
+        blocks = extract_md_sections(lines)
     else:
         blocks = []
 
@@ -445,7 +530,12 @@ def embed_and_store(collection, model, chunks: list[dict]) -> None:
 
 # ── Public chunk_file entry point ─────────────────────────────────────────────
 
-def chunk_file(path: Path) -> list[dict]:
+def chunk_file(path: Path, rel_path: str | None = None) -> list[dict]:
+    """
+    Chunk a file into indexable pieces. If rel_path is provided, use it as-is
+    (for orchestrator files with _orchestrator/ prefix). Otherwise derive from
+    PROJECT_ROOT.
+    """
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
@@ -455,7 +545,8 @@ def chunk_file(path: Path) -> list[dict]:
     if not content.strip():
         return []
 
-    rel_path = str(path.relative_to(PROJECT_ROOT)).replace("\\", "/")
+    if rel_path is None:
+        rel_path = str(path.relative_to(PROJECT_ROOT)).replace("\\", "/")
     language = EXT_LANG.get(path.suffix, "")
     lines    = content.split("\n")
 
@@ -497,12 +588,23 @@ def main():
             metadata={"hnsw:space": "cosine"},
         )
 
-    current_files: dict[str, float] = {}
+    # ── Discover files from both roots ──────────────────────────────────────
+    # current_files maps rel_path → (abs_path, mtime)
+    current_files: dict[str, tuple[Path, float]] = {}
+
+    # Montrroase project files
     for file_path in iter_source_files():
         rel = str(file_path.relative_to(PROJECT_ROOT)).replace("\\", "/")
-        current_files[rel] = file_path.stat().st_mtime
+        current_files[rel] = (file_path, file_path.stat().st_mtime)
 
-    changed = [p for p, mt in current_files.items() if mt != manifest.get(p)]
+    # Orchestrator context files (prefixed with _orchestrator/)
+    for abs_path, rel_path in iter_orchestrator_files():
+        try:
+            current_files[rel_path] = (abs_path, abs_path.stat().st_mtime)
+        except Exception:
+            pass
+
+    changed = [p for p, (_, mt) in current_files.items() if mt != manifest.get(p)]
     deleted = [p for p in manifest if p not in current_files]
 
     if not full_reindex and not changed and not deleted:
@@ -520,8 +622,8 @@ def main():
 
     total_new_chunks = 0
     for i, rel_path in enumerate(sorted(changed), 1):
-        abs_path = PROJECT_ROOT / rel_path
-        chunks   = chunk_file(abs_path)
+        abs_path = current_files[rel_path][0]
+        chunks   = chunk_file(abs_path, rel_path=rel_path)
 
         if not full_reindex:
             delete_file_chunks(collection, rel_path)
@@ -529,7 +631,7 @@ def main():
         if chunks:
             embed_and_store(collection, model, chunks)
             total_new_chunks += len(chunks)
-            manifest[rel_path] = current_files[rel_path]
+            manifest[rel_path] = current_files[rel_path][1]
             label = "({} chunk{})".format(len(chunks), "s" if len(chunks) > 1 else "")
             print(f"  [{i:3d}/{len(changed)}] {rel_path} {label}")
         else:

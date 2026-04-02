@@ -102,3 +102,5 @@ After the review, produce a compact fix block separated by `---FIX_INSTRUCTIONS-
 3. **Be bounded** — only review files in the implementer's output
 4. **Distinguish blocking from nice-to-have** — architecture patterns are critical; code style is minor
 5. **Don't rewrite** — describe the problem precisely; the implementer writes the fix
+
+> **Skills injected at runtime by orchestrator:** code_review.md

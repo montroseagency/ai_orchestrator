@@ -198,3 +198,5 @@ These are ALWAYS minor (never block PASS):
 4. **Be bounded** — only review files in the implementer's output, not the entire codebase
 5. **Distinguish blocking from nice-to-have** — minor style preferences are never critical
 6. **Don't rewrite** — describe the problem and what to fix, not the solution code
+
+> **Skills injected at runtime by orchestrator:** web_accessibility.md, playwright_testing.md, web_design_guidelines.md

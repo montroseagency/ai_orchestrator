@@ -1,16 +1,13 @@
 {
   "mcpServers": {
     "codebase-rag": {
-      "command": "python",
-      "args": ["src/rag_mcp/server.py"]
-    },
-    "ide-tools": {
-      "command": "python",
-      "args": ["src/ide_mcp_server.py"]
+      "command": "cmd",
+      "args": ["/c", "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe", "src/rag_mcp/server.py"],
+      "cwd": "C:\\Users\\Admin\\Documents\\GitHub\\ai_orchestrator"
     },
     "sequential-thinking": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/mcp-sequential-thinking"]
+      "command": "cmd",
+      "args": ["/c", "npx.cmd", "-y", "@modelcontextprotocol/server-sequential-thinking"]
     }
   }
 }
