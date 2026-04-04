@@ -714,6 +714,12 @@ async def _index_session(args: dict) -> list[TextContent]:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 async def main():
+    # Pre-load model and chroma client before listening for connections
+    # This prevents timeout on first tool call
+    _ = model()
+    _ = _chroma()
+    collection()  # Warmup
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

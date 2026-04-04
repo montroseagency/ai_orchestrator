@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "codebase-rag": {
-      "command": "cmd",
-      "args": ["/c", "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe", "src/rag_mcp/server.py"],
+      "command": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      "args": ["src\\rag_mcp\\server.py"],
       "cwd": "C:\\Users\\Admin\\Documents\\GitHub\\ai_orchestrator"
     },
     "sequential-thinking": {

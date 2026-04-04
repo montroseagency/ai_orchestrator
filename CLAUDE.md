@@ -106,6 +106,7 @@ Default to **sonnet** if unsure. Use **haiku** for fast auxiliary work. Use **op
 - `_vibecoding_brain/context/AGENTS.md` (if it exists)
 - `_vibecoding_brain/context/project_index.md` (if it exists)
 - `_vibecoding_brain/context/montrroase_guide.md` (if it exists)
+- `_vibecoding_brain/context/modal_guide.md` (if task involves modals, dialogs, or popups)
 
 **b) Problem rules** — Read `_vibecoding_brain/problems/rules.md` if it exists. Check if any rules match the current task's domain or files. Pass matching rules to planner and implementer.
 

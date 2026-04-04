@@ -24,7 +24,9 @@
       "Bash(ls -td /Users/MacOs/ai_orchestrator/_vibecoding_brain/sessions/make-a-simple-hello-world-*)",
       "Bash(python3:*)",
       "Bash(ls -la /c/Users/User/Documents/GitHub/agentic_workflow/src/*.py)",
-      "Bash(wc -l _vibecoding_brain/agents/skills/*.md _vibecoding_brain/agents/problem_tracker.md _vibecoding_brain/problems/rules.md CLAUDE.md)"
+      "Bash(wc -l _vibecoding_brain/agents/skills/*.md _vibecoding_brain/agents/problem_tracker.md _vibecoding_brain/problems/rules.md CLAUDE.md)",
+      "Bash(cmd /c \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe -c \\\\\"import chromadb; import sentence_transformers; print\\('deps OK'\\)\\\\\"\" 2>&1)",
+      "Bash(npx tsc:*)"
     ]
   },
   "enabledMcpjsonServers": [
