@@ -58,13 +58,28 @@ CHARS_PER_TOKEN_ESTIMATE = 4  # fallback token estimation
 # ── Lazy globals ──────────────────────────────────────────────────────────────
 _model: SentenceTransformer | None      = None
 _chroma_client: chromadb.PersistentClient | None = None
+_initialized: bool = False
+
+
+def _load_resources() -> None:
+    """Blocking initialization — run in a thread pool, not on the event loop."""
+    global _model, _chroma_client, _initialized
+    if _initialized:
+        return
+    _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
+    _model.max_seq_length = 8192
+    _chroma_client = chromadb.PersistentClient(path=str(DB_PATH))
+    # Warmup: create/get collection so the first real call is fast
+    _chroma_client.get_or_create_collection(COLLECTION, metadata={"hnsw:space": "cosine"})
+    _chroma_client.get_or_create_collection(SESSION_COLLECTION, metadata={"hnsw:space": "cosine"})
+    _initialized = True
 
 
 def model() -> SentenceTransformer:
     global _model
     if _model is None:
         _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-        _model.max_seq_length = 8192   # unlock full context window
+        _model.max_seq_length = 8192
     return _model
 
 
@@ -343,6 +358,11 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    # Wait for background model/chroma initialization to complete before
+    # any tool that needs embeddings or the DB.
+    if _init_future is not None and not _init_future.done():
+        await _init_future
+
     if name == "search_codebase":
         return await _search(arguments)
     if name == "search_multi":
@@ -714,8 +734,19 @@ async def _index_session(args: dict) -> list[TextContent]:
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+_init_future: asyncio.Future | None = None
+
+
 async def main():
+    global _init_future
+    loop = asyncio.get_event_loop()
+    # Start loading model+chroma in a thread — does not block the event loop.
+    # Tool calls will await this future before doing any embedding work.
+    _init_future = loop.run_in_executor(None, _load_resources)
+
     async with stdio_server() as (read_stream, write_stream):
+        # server.run() handles the MCP handshake immediately.
+        # _init_future is awaited lazily inside tool calls.
         await server.run(
             read_stream,
             write_stream,
