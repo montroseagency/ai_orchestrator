@@ -1,6 +1,6 @@
 # Montrroase — Agent Team Orchestration
 
-> This file is loaded automatically. The orchestration pipeline is **gated** — see below.
+> This file is loaded automatically. You are the **orchestrator/team lead**.
 
 ## Pipeline Gate
 
@@ -9,14 +9,13 @@
 - `task:` — general pipeline task
 - `fix:` — bug fix or correction
 
-If the message does NOT start with one of these prefixes, respond normally as a helpful assistant. Still follow the Architecture Rules and Design System when answering code questions, but do NOT spawn agents, create session artifacts, or run the pipeline.
+If the message does NOT start with one of these prefixes, respond normally as a helpful assistant. Still follow the Architecture Rules when answering code questions, but do NOT spawn agents or run the pipeline.
 
-**Examples:**
-- `build: Add a dark mode toggle` → run pipeline
-- `fix: the sidebar collapses on mobile` → run pipeline
-- `task: refactor the auth middleware` → run pipeline
-- `how does the auth flow work?` → answer normally, no pipeline
-- `what files handle billing?` → answer normally, no pipeline
+---
+
+## Core Rule: Always Use Team Agents
+
+**NEVER use subagents.** Every agent is spawned as a teammate using `TeamCreate` + `Agent` with `team_name` and a descriptive `name`. This enables task tracking, direct communication via `SendMessage`, and coordinated shutdown.
 
 ---
 
@@ -24,11 +23,11 @@ If the message does NOT start with one of these prefixes, respond normally as a 
 - **Name:** Montrroase — marketing agency management SaaS
 - **Stack:** Next.js 15 (App Router, React 19, TailwindCSS v4) + Django 4 REST API + Celery + PostgreSQL + Redis + WebSockets
 - **Project root:** `Montrroase_website/`
-- **Client:** `Montrroase_website/client/` — Next.js app
-- **Server:** `Montrroase_website/server/` — Django, all API in `server/api/`
+- **Context:**: `_vibecoding_brain/context/montrroase_guide.md`
 
 ## Architecture Rules (NEVER violate)
 1. No `fetch()` directly — use typed functions in `client/lib/api.ts`
+
 2. No inline styles — use Tailwind classes or CSS custom properties from `globals.css`
 3. Server components by default — only add `'use client'` when you need interactivity
 4. Backend uses DRF. New endpoints go in `server/api/views/` + registered in `server/api/urls.py`
@@ -47,118 +46,86 @@ If the message does NOT start with one of these prefixes, respond normally as a 
 
 ---
 
-## Smart Orchestration
+## How the Pipeline Works
 
-When a gated message arrives (`build:`, `task:`, `fix:`), follow this adaptive pipeline. You — the orchestrator — decide **what to run** based on the task. No fixed pipelines.
+When a gated message arrives, follow these steps. **All agent details, prompts, and skills live in `_vibecoding_brain/`** — read from there, not from this file.
 
-### Step 1 — Analyze & Decide
+### Step 1 — Read the Brain
+
+Before doing anything, read these files to understand the system:
+
+| File | Purpose |
+|---|---|
+| `_vibecoding_brain/agents/AGENTS.md` | **Agent registry** — lists every agent, their role, when to use them, model selection, and skill injections |
+| `_vibecoding_brain/context/project_index.md` | Key files with descriptions |
+| `_vibecoding_brain/context/montrroase_guide.md` | Business domain, user roles, features, data flows |
+| `_vibecoding_brain/problems/rules.md` | Learned prevention rules from past bugs |
+| `_vibecoding_brain/context/modal_guide.md` | Read ONLY if task involves modals/dialogs |
+
+### Step 2 — Analyze the Task
 
 Assess three dimensions:
 
-**Complexity:**
-| Level | Criteria | Examples |
-|---|---|---|
-| TRIVIAL | Single-line or config change. No logic. | Typo fix, env var change, rename a variable, update a string |
-| SIMPLE | Single-domain, < 3 files, clear scope | Add a field to a serializer, new badge component, simple endpoint |
-| MEDIUM | Multi-file, one or two domains, moderate logic | New page with API endpoint, form with validation, feature flag |
-| COMPLEX | Multi-domain, architectural impact, many files | New module with backend + frontend + real-time, major refactor |
+**Complexity:** TRIVIAL (single-line change) / SIMPLE (< 3 files, one domain) / MEDIUM (multi-file, 1-2 domains) / COMPLEX (multi-domain, architectural impact)
 
 **Domain:** FRONTEND / BACKEND / FULLSTACK / DESIGN / DATABASE
 
-**Risk:**
-| Level | Criteria |
+**Risk:** LOW (isolated, no migrations) / MEDIUM (new endpoint, model changes) / HIGH (migrations on prod table, auth changes, breaking API)
+
+### Step 3 — Choose Execution Strategy
+
+| Complexity | What to Do |
 |---|---|
-| LOW | No migrations, no auth changes, isolated component |
-| MEDIUM | New endpoint, model changes, shared component modification |
-| HIGH | Migration on production table, auth/permission changes, breaking API changes |
+| **TRIVIAL** | Handle it yourself. No agents. No artifacts. |
+| **SIMPLE** | 1-2 team agents. Brief walkthrough only. |
+| **MEDIUM** | Planner → Implementer → Tester(s). Creative Brain if frontend-visible. Full artifacts. |
+| **COMPLEX** | Full team: Planner → Creative Brain (if frontend) → Implementer → All relevant testers. Full artifacts. |
 
-### Step 2 — Select Execution Strategy
+**Refer to `AGENTS.md`** for which agents to spawn, what model to use, and which skills to inject.
 
-Based on your analysis, choose the right approach:
+### Step 4 — Create Team & Tasks (SIMPLE and above)
 
-| Complexity | What to Do | Agents | Session Artifacts |
-|---|---|---|---|
-| **TRIVIAL** | Handle it yourself directly. No agents needed. Make the change, run lint, done. | None | None |
-| **SIMPLE** | Launch the single most appropriate specialist agent. Add a tester only if risk > LOW. | 1-2 agents | Brief walkthrough only |
-| **MEDIUM** | Planner → Implementer → Tester(s). Add Creative Brain only if frontend-visible. | 2-4 agents | Full artifacts |
-| **COMPLEX** | Full team: Planner → Creative Brain (if frontend) → Implementer → All relevant testers. | 3-5 agents | Full artifacts |
+1. `TeamCreate` with descriptive `team_name` (kebab-case, e.g. `fix-auth-modal`)
+2. `TaskCreate` for each piece of work
+3. `TaskUpdate` with `addBlockedBy` for sequential work
+4. `TaskUpdate` with `owner` matching agent `name`
 
-**You decide which agents are needed.** Don't launch agents that won't add value. A backend-only task doesn't need Creative Brain. A design-only task doesn't need Backend Tester.
+### Step 5 — Gather Context
 
-### Step 3 — Select Models
+**a) MCP semantic search** (if RAG MCP is responsive — skip if hanging >30s):
+- `search_codebase` with natural language query from the task
+- `search_symbol` if task mentions a specific function/class/component
+- `search_past_sessions` for historical context
 
-Set the `model` parameter when spawning each Agent based on task complexity:
+**b) Read source files** — Read actual files that will be MODIFIED. Embed full content when passing to agents.
 
-| Agent | SIMPLE | MEDIUM | COMPLEX |
-|---|---|---|---|
-| planner | sonnet | sonnet | opus |
-| creative_brain | sonnet | sonnet | opus |
-| implementer | haiku | sonnet | opus |
-| ui_ux_tester | haiku | sonnet | sonnet |
-| backend_tester | haiku | sonnet | sonnet |
-| problem_tracker | haiku | haiku | sonnet |
+**c) Problem rules** — Check `rules.md` for matching rules. Pass relevant ones to planner and implementer.
 
-Default to **sonnet** if unsure. Use **haiku** for fast auxiliary work. Use **opus** only for complex planning or implementation.
+**IMPORTANT:** MCP tools are only available to you (the orchestrator). Team agents do NOT have MCP access. You must run searches before spawning agents and embed results in their prompts.
 
-### Step 4 — Gather Context
+### Step 6 — Spawn Agents
 
-**a) Always read:**
-- `_vibecoding_brain/context/AGENTS.md` (if it exists)
-- `_vibecoding_brain/context/project_index.md` (if it exists)
-- `_vibecoding_brain/context/montrroase_guide.md` (if it exists)
-- `_vibecoding_brain/context/modal_guide.md` (if task involves modals, dialogs, or popups)
+Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. Each agent prompt must include:
+- Task description and context
+- Relevant file contents (full — never summarize code)
+- Architecture rules
+- Injected skills (see AGENTS.md Skill Injection Table)
+- Matching problem prevention rules
+- Instruction to mark their task as completed when done
 
-**b) Problem rules** — Read `_vibecoding_brain/problems/rules.md` if it exists. Check if any rules match the current task's domain or files. Pass matching rules to planner and implementer.
+**Embedding format for files in agent prompts:**
+```
+## File: path/to/file.tsx
+\`\`\`tsx
+[full file contents]
+\`\`\`
+```
 
-**c) Semantic discovery** — use MCP tools to find relevant code:
-- `search_codebase` with a natural language query derived from the task
-- `search_symbol` if the task mentions a specific function, class, or component
-- `search_multi` with 2-3 related queries for multi-area tasks
+**Parallel execution:** When work is independent (e.g. backend + frontend), spawn multiple agents in the same response turn.
 
-**d) Session memory** — call `search_past_sessions` with the task description. Include top 3 results as historical context if relevant.
+### Step 7 — Self-Healing & Quality Gate
 
-**e) Read source files** — Read the actual files that will be MODIFIED. Embed their full content when passing to subagents.
-
-**Prefer MCP search over blind Glob/Grep** — semantic search finds conceptually related code.
-
-### Step 5 — Plan (skip for TRIVIAL and SIMPLE)
-
-Read `_vibecoding_brain/agents/planner.md`. Spawn an Agent with that prompt plus:
-- Task description, complexity, domain
-- Full content of AGENTS.md
-- Relevant file paths from project index
-- Any matching problem prevention rules
-
-Write the returned plan to: `_vibecoding_brain/sessions/{session_id}/plan.md`
-
-### Step 6 — Design Brief (only if frontend-visible AND complexity >= MEDIUM)
-
-Read `_vibecoding_brain/agents/creative_brain.md`. Spawn an Agent with that prompt plus:
-- Task description
-- Full `plan.md` content
-- Contents of `_vibecoding_brain/context/design_system.md`
-- Injected skills (see Skill Injection Table)
-
-Write to: `_vibecoding_brain/sessions/{session_id}/design_brief.md`
-
-### Step 7 — Implement
-
-For **TRIVIAL**: Make the change yourself directly. No implementer agent needed.
-
-For **SIMPLE and above**: Read `_vibecoding_brain/agents/implementer.md`. Spawn an Agent with:
-- Task description
-- Full `plan.md` content (if exists)
-- Full `design_brief.md` content (if exists)
-- **Actual file contents** of every file listed under "Files to MODIFY/READ"
-- Architecture rules from this file
-- Injected skills (see Skill Injection Table)
-- Any matching problem prevention rules
-
-The implementer writes files directly to disk using Write/Edit tools.
-
-### Step 7.5 — Self-Healing Validation
-
-After implementation, validate changed files:
+After implementation:
 ```bash
 # Frontend
 npx tsc --noEmit 2>&1 | head -50
@@ -167,153 +134,67 @@ npx eslint <changed-files> 2>&1 | head -50
 python3 -m ruff check <file> 2>&1 | head -50
 ```
 
-If errors: re-spawn implementer with fix instructions. Max 2 self-healing rounds before testing.
+**Quality gate** — check modified frontend files for banned patterns:
+- `bg-gradient-to` / `from-purple` / `to-blue` (AI-slop gradients)
+- `rounded-2xl` (must use graduated border-radius)
+- `import ... from 'lucide-react'` (must use Phosphor)
+- `font-bold` / `font-[700]` (max weight 600 unless page heading)
+- Raw tailwind colors like `bg-zinc-*`, `text-indigo-*`
+- Emojis as UI elements
 
-### Step 7.75 — Quality Gate Check
-
-Check all modified `.tsx/.ts/.jsx/.js/.css` files for these banned patterns:
-- `bg-gradient-to` or `from-purple` or `to-blue` — ban AI-slop gradients
-- `rounded-2xl` — must use graduated border-radius
-- `import ... from 'lucide-react'` — must use Phosphor icons
-- `font-bold` or `font-[700]` — max weight 600 in product UI unless page heading
-- Raw tailwind classes like `bg-zinc-*`, `text-indigo-*` — use Montrroase tokens
-- Emojis used as UI elements (emoji inside JSX tags)
-
-If any match: re-spawn implementer with specific fix instructions before testing.
+If any match: send fix instructions to implementer via `SendMessage`.
 
 ### Step 8 — Test Loop (max 8 iterations)
 
-**Skip for TRIVIAL.** For SIMPLE with risk LOW, testing is optional (use your judgment).
+Skip for TRIVIAL. Optional for SIMPLE with LOW risk.
 
-Choose tester(s) based on domain:
-- **Frontend-visible:** Read `_vibecoding_brain/agents/ui_ux_tester.md`, spawn Agent with injected skills
-- **Backend:** Read `_vibecoding_brain/agents/backend_tester.md`, spawn Agent with injected skills
-- **FULLSTACK:** Spawn **both** testers concurrently — FAIL if either fails
-
-Give testers: plan + design_brief (if applicable) + full content of every written file.
-
-**If FAIL:** Extract fix instructions, increment iteration counter (N).
-- If N < 8: re-spawn implementer with fix instructions (see Reflection on Retry)
-- If N >= 8: stop, mark status as `fail_max_retries`
-
-**If PASS:** Proceed to wrap-up.
-
-**Stuck detection:** If same core issue appears 3 consecutive times, STOP. Mark status `stuck`.
+Spawn tester(s) as team agents (see AGENTS.md for which testers to use per domain). If FAIL, send fix instructions to implementer via `SendMessage` — do NOT re-spawn. If same issue appears 3 consecutive times, mark `stuck` and stop.
 
 ### Step 9 — Problem Tracking (fix: tasks only)
 
-On `fix:` prefixed tasks that PASS testing:
-
-Read `_vibecoding_brain/agents/problem_tracker.md`. Spawn an Agent (model: haiku) with:
-- Original problem description
-- Files involved in the fix
-- Summary of what was changed
-- Tester's verdict
-
-The problem tracker writes a preventive rule to `_vibecoding_brain/problems/rules.md`.
+On successful `fix:` tasks, spawn problem-tracker agent to write a prevention rule.
 
 ### Step 10 — Wrap Up
 
-**TRIVIAL:** Report what was changed. No artifacts. No session indexing.
+**TRIVIAL:** Report changes. Done.
+**SIMPLE:** Write walkthrough to `_vibecoding_brain/sessions/{session_id}/walkthrough.md`.
+**MEDIUM/COMPLEX:** Write walkthrough + reflection. Index session via MCP. Output JSON summary:
 
-**SIMPLE:** Write a brief walkthrough to `_vibecoding_brain/sessions/{session_id}/walkthrough.md`. Index the session.
-
-**MEDIUM / COMPLEX:**
-1. Write `_vibecoding_brain/sessions/{session_id}/walkthrough.md`:
-   - What was built and why
-   - Every file changed with a one-line description
-   - Architectural decisions made
-   - Follow-up items out of scope
-
-2. Write `_vibecoding_brain/sessions/{session_id}/reflection.md`:
-   - What went well
-   - What went poorly (if retries, why)
-   - What the tester caught that the implementer missed
-   - One concrete suggestion for improving agent prompts
-
-3. Call `index_session` MCP tool with:
-   - session_id, original prompt, outcome (pass/fail/stuck), summary, files_touched list, iterations count
-
-4. Output this JSON block:
 ```json
 {
   "session_id": "{session_id}",
   "status": "pass | fail_max_retries | stuck",
-  "files_written": ["path/to/file1.tsx"],
-  "iterations": N,
+  "files_written": ["path/to/file"],
+  "iterations": 0,
   "review_verdict": "PASS | FAIL",
-  "summary": "2-3 sentence summary.",
-  "quality_assessment": {
-    "correctness": 0.0,
-    "completeness": 0.0,
-    "code_quality": 0.0,
-    "notes": "Brief self-assessment"
-  }
+  "summary": "2-3 sentence summary."
 }
 ```
 
----
-
-## Skill Injection
-
-When spawning agents, read the relevant skill files from `_vibecoding_brain/agents/skills/` and append their content to the agent's prompt.
-
-### Skill Injection Table
-
-| Skill File | Injected Into | When |
-|---|---|---|
-| `web_accessibility.md` | ui_ux_tester | FRONTEND / FULLSTACK / DESIGN |
-| `playwright_testing.md` | ui_ux_tester | Only when dev server URL is available |
-| `code_review.md` | backend_tester | BACKEND / FULLSTACK / DATABASE / REFACTOR |
-| `frontend_design.md` | creative_brain, implementer | FRONTEND / FULLSTACK / DESIGN |
-| `ui_ux_pro_max.md` | creative_brain | FRONTEND / FULLSTACK / DESIGN |
-| `web_design_guidelines.md` | creative_brain, ui_ux_tester | FRONTEND / FULLSTACK / DESIGN |
-
-### Injection Format
-Read the skill `.md` file and append it to the agent prompt separated by `---`:
-```
-[agent prompt content]
-
----
-
-[skill file contents]
-```
+Session artifacts go in `_vibecoding_brain/sessions/{session_id}/`. Generate `session_id` as kebab-case slug, max 40 chars.
 
 ---
 
 ## Pipeline Rules
 
+### Team Lifecycle
+1. Create team via `TeamCreate` at pipeline start
+2. Create tasks with `TaskCreate`, set dependencies with `addBlockedBy`
+3. Spawn team agents with `Agent` using `team_name` and descriptive `name`
+4. Agents mark tasks completed via `TaskUpdate`
+5. Send `{"type": "shutdown_request"}` via `SendMessage` when agent is done
+6. `TeamDelete` after pipeline completes
+7. One team at a time — delete previous before creating new
+
 ### Context Compression
-Between agents, compress outputs to <200 words. **Exception**: implementer and tester MUST receive full file contents — never summarize code.
+Between agents, compress outputs to <200 words. **Exception**: implementer and tester MUST receive full file contents.
 
-### Embedding Files in Subagent Prompts
-```
-## File: path/to/file.tsx
-\`\`\`tsx
-[file contents]
-\`\`\`
-```
+### Reflection on Retry (N > 1)
+> "Attempt {N}/8. Before retrying: 1) What specifically failed? 2) What is ONE concrete change to fix it? 3) Are you repeating the same approach? If yes, try fundamentally different. Fix EXACTLY these issues — do not refactor."
 
-### Reflection on Retry
-Before re-spawning implementer on retry N > 1:
-> "Attempt {N}/8. Before retrying: 1) What specifically failed? 2) What is ONE concrete change that would fix it? 3) Are you repeating the same approach? If yes, try a fundamentally different approach. The reviewer found these issues: {fix_instructions}. Fix EXACTLY these — do not refactor or change anything not flagged."
-
-### Parallel Execution
-When pipeline allows concurrent work (FULLSTACK testing), spawn multiple subagents in the same response turn.
-
-### Session Artifacts
-All artifacts go in `_vibecoding_brain/sessions/{session_id}/`:
-- `plan.md`, `design_brief.md`, `review.md`, `walkthrough.md`, `reflection.md`
-
-Generate `session_id` as a kebab-case slug, max 40 chars (e.g. `add-dark-mode-toggle`).
-
-### Context Docs (read when needed)
-- `_vibecoding_brain/context/design_system.md` — Full design tokens, component patterns
-- `_vibecoding_brain/context/tech_stack.md` — Stack decisions, testing, deployment
-- `_vibecoding_brain/context/project_index.md` — Key files with descriptions
-- `_vibecoding_brain/context/montrroase_guide.md` — Business domain, user roles, features, data flows, infrastructure
-
-### Problem Prevention Rules
-- `_vibecoding_brain/problems/rules.md` — Learned rules from past bugs. Read during context gathering.
-- Rules are written by the Problem Tracker agent after confirmed fixes.
-- If `rules.md` exceeds 100 rules, use `search_codebase` against it rather than reading the whole file.
+### Context Docs (in `_vibecoding_brain/context/`)
+- `design_system.md` — Full design tokens, component patterns
+- `tech_stack.md` — Stack decisions, testing, deployment
+- `project_index.md` — Key files with descriptions
+- `montrroase_guide.md` — Business domain, user roles, features, data flows
+- `modal_guide.md` — Modal building patterns (read when task involves modals)

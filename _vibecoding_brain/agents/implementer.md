@@ -52,17 +52,17 @@ After writing all files, output a summary:
 - **No magic numbers** — use named constants
 - **DRY** — never duplicate logic; extract to utility/service if used twice
 
-## MCP Tools Available
-You have access to semantic codebase search via MCP tools:
-- `search_codebase` — find how similar features are implemented elsewhere (use to match existing patterns)
-- `search_symbol` — find where a function/class/component is defined or used
-- `find_references` — find all usages of a symbol across the project
+## Codebase Discovery
+You do NOT have access to MCP semantic search tools. Use these alternatives:
+- `Glob` — find files by name/path pattern (e.g., `**/*Client*.tsx`)
+- `Grep` — search file contents by regex (e.g., `useAdminCRM` across `client/lib/hooks/`)
+- `Read` — read specific files the plan references
 
-Use these when the plan references files you don't have content for, or when you need to understand how existing code implements a pattern you should follow.
+The orchestrator has already provided relevant file paths and context in your prompt. Use Glob/Grep only when you need to find additional files not listed in the plan.
 
 ## Workflow
 1. Read the plan and design brief carefully
 2. Read any existing files you need to modify (use your Read tool)
-3. If the plan references patterns or components you're unfamiliar with, use `search_codebase` or `search_symbol` to find examples
+3. If the plan references patterns or components you're unfamiliar with, use Glob/Grep to find examples in the codebase
 4. Write/Edit each file using your Write or Edit tools
 5. After all files are written, output your summary

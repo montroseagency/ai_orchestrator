@@ -19,24 +19,28 @@ Montrroase is a **marketing agency management SaaS** platform. It allows a marke
 ## 2. User Roles & Portals
 
 ### 2.1 Admin (`/dashboard/admin/`)
-The agency owner/manager. Full system access.
+The agency owner/manager. Full system access. The admin dashboard is structured as a **mission control center** with three core portals.
+
+**Sidebar Structure (3+3+3):**
+- **Home:** Command Center (`/dashboard/admin/`) — Strategic overview with attention panel, KPI strip, revenue chart, activity feed
+- **Portals:** CRM Portal (`/crm`), Team Portal (`/team`), Operations Portal (`/operations`)
+- **Tools:** Approvals (`/approvals`), Reports Hub (`/reports`), Courses Manager (`/courses`)
+- **Settings:** Company Settings (`/settings/company`), Service Catalog (`/settings/catalog`), Notifications (`/settings/notifications`)
 
 **Capabilities:**
-- Manage all clients (create, edit, assign agents, track billing)
-- Manage agents/team members (view performance, assign clients)
-- Revenue analytics and forecasting
-- Client health monitoring
-- Approval queue (approve/reject agent requests, client content)
-- Invoice management (create, track, mark paid)
-- Payment verification (approve bank transfer proofs)
-- Service configuration (categories, pricing tiers)
-- Website type/feature/category configuration
-- Course management
-- Support ticket handling
-- Redemption code management
-- Bank settings for receiving payments
-- Bulk operations (assign agents, update statuses)
-- Pending communications from agents
+- **CRM Portal** — Full client relationship management: Pipeline (kanban), Board, Table views; Client Detail with 7 tabs (Overview, Work Feed, Marketing, Website, Team, Billing, Notes); multi-agent team assignment per client; client health scoring (0-100, auto-calculated daily)
+- **Team Portal** — Full team management: Overview, Roster, Workload Matrix; Agent Detail with 6 tabs; Team Messaging (moved from sidebar); Admin Task delegation system
+- **Operations Portal** — Financial operations: Revenue Dashboard, Invoice Manager with aging, Payment Verification queue, Support Manager, Audit Log
+- **Approvals** — Centralized queue for content, billing, agent request, and client change approvals
+- **Reports Hub** — Client, Financial, Team, Marketing, Website reports with save/schedule
+- **Company Settings** — Agency profile (not a Client record), branding, banking, integrations, security
+- **Service Catalog** — Marketing plans and pricing tiers, website project types, add-ons
+- Multi-agent team assignment per client (lead/support/reviewer roles per department)
+- Client health monitoring (automated scoring: billing, engagement, deliverables, satisfaction)
+- Admin task delegation to agents (visible in agent Command Center)
+- Universal activity log tracking all platform events
+- Admin notes per client (private, tagged, pinnable)
+- Daily admin digest (email) + daily health score recalculation (3AM Celery task)
 
 ### 2.2 Marketing Agent (`/dashboard/agent/marketing/`)
 An agency employee in the marketing department.
@@ -115,7 +119,7 @@ A business contracting the agency. Core entity linking to almost everything.
 - **Status:** active, pending, paused, cancelled
 - **Payment status:** paid, overdue, pending, none
 - **Plan tier:** starter, pro, premium, none (PayPal subscription-based)
-- **Agent assignments:** separate marketing_agent and website_agent (ForeignKeys to Agent)
+- **Agent assignments:** `marketing_agent` and `website_agent` ForeignKeys (deprecated — kept for backward compat) + `ClientTeamAssignment` M2M (new — supports multiple agents per client with lead/support/reviewer roles per department)
 - **Multi-service:** can activate marketing, website, and courses independently via ClientServiceSettings
 - **Profile:** company, industry, website URL, company size, tax ID, timezone, language, preferred contact method
 - **Social accounts:** OAuth-connected (Instagram, TikTok, YouTube, Twitter, LinkedIn, Facebook) with encrypted tokens
@@ -309,6 +313,17 @@ OAuth-connected social accounts with metrics tracking.
 - **Metrics:** real-time per-account (followers, engagement, reach, impressions) and per-post (likes, comments, shares, saves)
 - **Sync:** manual trigger + Celery-scheduled (Instagram every 4h, YouTube every 6h)
 
+### 3.23 Admin Dashboard Models (New)
+New models added in the admin dashboard redesign. In `server/api/models/admin_dashboard.py`.
+
+- **AgencyProfile** — Singleton model for the agency's own identity (name, legal_name, logo, branding colors, banking defaults). NOT a Client. Only one AgencyProfile per system.
+- **ClientTeamAssignment** — M2M bridge between Client and Agent with role (lead/support/reviewer) and department (marketing/development). Replaces single-FK pattern. unique_together on [client, agent].
+- **ClientHealthScore** — OneToOne with Client. Stores auto-calculated scores: billing_health, engagement_health, deliverable_health, satisfaction_health, overall_score (0-100). Recalculated daily at 3AM.
+- **AdminTask** — Tasks created by admin and assigned to agents. Has priority (low/medium/high/urgent), status (pending/acknowledged/in_progress/completed/cancelled), category, due_date. Appears in agent's Command Center under "From Admin" section.
+- **ActivityLog** — Universal event tracking. Records actor, action, entity_type, entity_id, client, agent, description, metadata. Indexed on [client, -created_at], [agent, -created_at], [entity_type, -created_at]. Populated by signal handlers and `log_activity` Celery task. Powers the Work Feed, Audit Log, and Agent Work Log.
+- **AdminNote** — Admin's private notes about clients. Supports tags (JSONField), pinning, searching.
+- **SavedReport** — Saved report configurations with optional schedule (none/weekly/monthly) for automated generation.
+
 ---
 
 ## 4. Data Flow Patterns
@@ -355,6 +370,7 @@ OAuth-connected social accounts with metrics tracking.
 ```
 Django ──RabbitMQ──→ Realtime Service (Socket.IO → clients)
 Django ──RabbitMQ──→ Notification Service (Socket.IO → clients)
+
 Django ──HTTP──→ Realtime Service (internal API calls)
 Notification Service ──HTTP──→ Django (validate tokens, fetch data)
 Celery Worker ──same DB──→ PostgreSQL (shared with Django)
@@ -579,11 +595,14 @@ Analytics Worker ──MongoDB──→ Realtime DB
 | Instagram sync | Every 4 hours | instagram | Sync account metrics |
 | YouTube sync | Every 6 hours | youtube | Sync channel metrics |
 | Analytics aggregation | Daily 2:00 AM | analytics | Aggregate daily metrics |
+| **Client health score recalculation** | **Daily 3:00 AM** | **analytics** | **Recalculate ClientHealthScore for all active clients** |
 | Weekly reports | Monday 9:00 AM | reports | Generate client reports |
 | Invoice notifications | Daily 9:00 AM | maintenance | Send overdue reminders |
 | Task overdue checks | Daily 9:00 AM | maintenance | Flag overdue tasks |
 | Monthly performance | 1st of month 10:00 AM | reports | Generate monthly reports |
 | Recurring time blocks | Daily midnight | maintenance | Generate recurring schedule blocks |
+| **Generate scheduled reports** | **Daily 6:00 AM** | **reports** | **Run SavedReport configs with weekly/monthly schedules** |
+| **Admin daily digest** | **Daily 8:00 AM** | **reports** | **Email admin summary: attention items, revenue, new clients, open tickets** |
 
 ---
 

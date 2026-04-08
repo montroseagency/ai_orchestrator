@@ -17,24 +17,29 @@ Transport: stdio (Claude Code connects at startup)
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import functools
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import chromadb
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
-from sentence_transformers import SentenceTransformer
 
-# Try tiktoken for accurate token counting in session memory budget
+# chromadb and sentence_transformers are imported lazily inside their
+# respective init functions. PyTorch init alone takes ~15s.
+
+# Tiktoken is small; keep it optional at module level (no heavy deps).
+_TIKTOKEN_AVAILABLE = False
 try:
-    import tiktoken
+    import tiktoken  # noqa: F401
     _TIKTOKEN_AVAILABLE = True
 except ImportError:
-    _TIKTOKEN_AVAILABLE = False
+    pass
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT      = Path(__file__).parent.parent.parent.resolve() / "Montrroase_website"
@@ -55,51 +60,82 @@ SESSION_MIN_RELEVANCE = 0.50  # stricter threshold for session matches
 SESSION_BUDGET_TOKENS = 300   # max tokens for formatted session context
 CHARS_PER_TOKEN_ESTIMATE = 4  # fallback token estimation
 
-# ── Lazy globals ──────────────────────────────────────────────────────────────
+# ── Thread pool ──────────────────────────────────────────────────────────────
+# Pool for running CPU-bound tool work (encoding, ChromaDB queries) off the
+# asyncio event loop.
+_work_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="worker")
+
+# ── Lazy globals ─────────────────────────────────────────────────────────────
 _model: SentenceTransformer | None      = None
 _chroma_client: chromadb.PersistentClient | None = None
-_initialized: bool = False
+_model_loaded: bool = False
+_model_error: str | None = None
 
 
-def _load_resources() -> None:
-    """Blocking initialization — run in a thread pool, not on the event loop."""
-    global _model, _chroma_client, _initialized
-    if _initialized:
-        return
-    _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-    _model.max_seq_length = 8192
+def _load_model_sync() -> str | None:
+    """Load SentenceTransformer model. Returns error string or None.
+
+    Called via _offload() on the first tool call that needs embeddings.
+    NOT called at startup — on Windows, background threads get blocked by
+    MCP's stdio transport.
+    """
+    global _model, _model_loaded, _model_error
+    if _model_loaded:
+        return None
+    if _model_error:
+        return f"RAG MCP model previously failed to load: {_model_error}"
+
+    t0 = time.monotonic()
+    try:
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+        print(f"[rag-mcp] sentence_transformers imported ({time.monotonic()-t0:.1f}s)", file=sys.stderr, flush=True)
+        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
+        _model.max_seq_length = 8192
+        # Warm up: run a dummy encode so first real query is fast
+        _model.encode(["warmup"])
+        _model_loaded = True
+        print(f"[rag-mcp] Model loaded and warmed up ({time.monotonic()-t0:.1f}s)", file=sys.stderr, flush=True)
+        return None
+    except Exception as exc:
+        import traceback
+        _model_error = str(exc)
+        print(f"[rag-mcp] MODEL LOAD FAILED: {exc}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        return (
+            f"RAG MCP model failed to load: {exc}\n\n"
+            "Check that all dependencies are installed:\n"
+            "  pip install sentence-transformers\n"
+            "and that the model can be downloaded from HuggingFace."
+        )
+
+
+def _init_chroma() -> None:
+    """Init ChromaDB client synchronously (fast, < 1s)."""
+    global _chroma_client
+    import chromadb  # noqa: PLC0415
+    print("[rag-mcp] Loading ChromaDB client...", file=sys.stderr, flush=True)
     _chroma_client = chromadb.PersistentClient(path=str(DB_PATH))
-    # Warmup: create/get collection so the first real call is fast
     _chroma_client.get_or_create_collection(COLLECTION, metadata={"hnsw:space": "cosine"})
     _chroma_client.get_or_create_collection(SESSION_COLLECTION, metadata={"hnsw:space": "cosine"})
-    _initialized = True
+    print("[rag-mcp] ChromaDB ready.", file=sys.stderr, flush=True)
 
 
 def model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-        _model.max_seq_length = 8192
+    assert _model is not None, "Call _load_model_sync() first"
     return _model
 
 
 def _chroma() -> chromadb.PersistentClient:
-    """Return (cached) ChromaDB client. The client itself is cheap to reuse."""
+    """Return (cached) ChromaDB client."""
     global _chroma_client
     if _chroma_client is None:
+        import chromadb  # noqa: PLC0415
         _chroma_client = chromadb.PersistentClient(path=str(DB_PATH))
     return _chroma_client
 
 
 def collection():
-    """
-    Always resolve the collection fresh from the client so that a full reindex
-    (which deletes and recreates the collection with a new UUID) never leaves
-    this server holding a stale reference.
-
-    get_or_create_collection is a lightweight SQLite metadata lookup — safe to
-    call on every request.
-    """
+    """Always resolve the collection fresh (lightweight SQLite lookup)."""
     return _chroma().get_or_create_collection(
         COLLECTION,
         metadata={"hnsw:space": "cosine"},
@@ -112,6 +148,14 @@ def session_collection():
         SESSION_COLLECTION,
         metadata={"hnsw:space": "cosine"},
     )
+
+
+# ── Async helper ─────────────────────────────────────────────────────────────
+
+async def _offload(fn, *args):
+    """Run a sync function in _work_executor, keeping the event loop free."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_work_executor, functools.partial(fn, *args))
 
 
 # ── Token budget helpers ─────────────────────────────────────────────────────
@@ -163,7 +207,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Semantically search the Montrroase codebase. "
                 "Returns ranked code chunks with file paths and line numbers. "
-                "Results are filtered by relevance (≥30%) and deduplicated across files. "
+                "Results are filtered by relevance (>=30%) and deduplicated across files. "
                 "Use this instead of explore agents to find where features are implemented."
             ),
             inputSchema={
@@ -198,7 +242,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_multi",
             description=(
-                "Run 2–5 semantic queries in one call and get merged, deduplicated results. "
+                "Run 2-5 semantic queries in one call and get merged, deduplicated results. "
                 "More efficient than calling search_codebase repeatedly for related concepts. "
                 "Use when you need code matching any of several related ideas at once."
             ),
@@ -208,7 +252,7 @@ async def list_tools() -> list[Tool]:
                     "queries": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of 2–5 natural language queries",
+                        "description": "List of 2-5 natural language queries",
                         "minItems": 2,
                         "maxItems": 5,
                     },
@@ -356,12 +400,15 @@ async def list_tools() -> list[Tool]:
     ]
 
 
+_NEEDS_MODEL = {"search_codebase", "search_multi", "search_past_sessions", "index_session"}
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    # Wait for background model/chroma initialization to complete before
-    # any tool that needs embeddings or the DB.
-    if _init_future is not None and not _init_future.done():
-        await _init_future
+    # Tools that need embeddings check that the model loaded successfully at startup.
+    if name in _NEEDS_MODEL:
+        if not _model_loaded:
+            return [TextContent(type="text", text=_model_error or "Model not loaded.")]
 
     if name == "search_codebase":
         return await _search(arguments)
@@ -382,17 +429,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
-# ── Shared search helpers ──────────────────────────────────────────────────────
+# ── Shared search helpers (sync — always called via _offload) ────────────────
 
-def _run_query(query: str, n: int, path_filter: str) -> dict | str:
+def _run_query_sync(query: str, n: int, path_filter: str) -> dict | str:
     """
     Run a single semantic query against ChromaDB.
     Returns a raw results dict or an error string.
-    Fetches up to `n` candidates (caller applies threshold + MMR after).
+    SYNC — must be called from a thread pool, never from the event loop.
     """
     col = collection()
     if col.count() == 0:
-        return "Index is empty — run `python indexer.py --full` first."
+        return "Index is empty -- run `python indexer.py --full` first."
 
     embedding = model().encode([EMBED_QUERY_PREFIX + query]).tolist()
     where = {"file_path": {"$contains": path_filter}} if path_filter else None
@@ -451,7 +498,7 @@ def _format_results(results: list[tuple[str, dict, float]]) -> str:
         sym_str = f" | `{symbols}`" if symbols else ""
         header  = (
             f"### [{i+1}] `{meta['file_path']}` "
-            f"lines {meta['start_line']}–{meta['end_line']} "
+            f"lines {meta['start_line']}-{meta['end_line']} "
             f"({relevance:.0f}% match){sym_str}"
         )
         parts.append(f"{header}\n```{lang}\n{doc}\n```")
@@ -459,15 +506,14 @@ def _format_results(results: list[tuple[str, dict, float]]) -> str:
     return "\n\n".join(parts)
 
 
-# ── Tool implementations ───────────────────────────────────────────────────────
+# ── Sync tool bodies (run in _work_executor via _offload) ────────────────────
 
-async def _search(args: dict) -> list[TextContent]:
+def _search_sync(args: dict) -> list[TextContent]:
     query       = args["query"]
     n_results   = min(int(args.get("n_results", 8)), 20)
     path_filter = args.get("path_filter", "").strip()
 
-    # Fetch 3× candidates so threshold + MMR have enough to work with
-    raw = _run_query(query, n_results * 3, path_filter)
+    raw = _run_query_sync(query, n_results * 3, path_filter)
     if isinstance(raw, str):
         return [TextContent(type="text", text=raw)]
 
@@ -475,7 +521,7 @@ async def _search(args: dict) -> list[TextContent]:
     return [TextContent(type="text", text=_format_results(filtered))]
 
 
-async def _search_multi(args: dict) -> list[TextContent]:
+def _search_multi_sync(args: dict) -> list[TextContent]:
     queries     = args.get("queries", [])
     n_results   = min(int(args.get("n_results", 10)), 20)
     path_filter = args.get("path_filter", "").strip()
@@ -483,13 +529,12 @@ async def _search_multi(args: dict) -> list[TextContent]:
     if not queries:
         return [TextContent(type="text", text="Provide at least 2 queries.")]
 
-    # Run all queries, keep the best distance score per unique chunk
-    best: dict[str, tuple[str, dict, float]] = {}  # chunk_id → (doc, meta, dist)
+    best: dict[str, tuple[str, dict, float]] = {}
 
     for q in queries[:5]:
-        raw = _run_query(q, n_results * 2, path_filter)
+        raw = _run_query_sync(q, n_results * 2, path_filter)
         if isinstance(raw, str):
-            continue  # skip errored queries
+            continue
 
         docs      = raw["documents"][0]
         metas     = raw["metadatas"][0]
@@ -503,7 +548,6 @@ async def _search_multi(args: dict) -> list[TextContent]:
     if not best:
         return [TextContent(type="text", text="No results found.")]
 
-    # Re-sort all candidates by distance and apply threshold + MMR
     ranked = sorted(best.values(), key=lambda x: x[2])
     fake_results = {
         "documents": [[r[0] for r in ranked]],
@@ -516,16 +560,7 @@ async def _search_multi(args: dict) -> list[TextContent]:
     return [TextContent(type="text", text=header + _format_results(filtered))]
 
 
-async def _search_symbol(args: dict) -> list[TextContent]:
-    """
-    Find chunks by exact function/class name.
-
-    Uses where_document (searches the code text itself) rather than metadata
-    $contains, because ChromaDB's where clause only supports $eq/$ne/$in for
-    string metadata — $contains is only valid in where_document.
-
-    This is actually better: it finds both definition and call sites.
-    """
+def _search_symbol_sync(args: dict) -> list[TextContent]:
     symbol      = args.get("symbol", "").strip()
     path_filter = args.get("path_filter", "").strip()
 
@@ -534,14 +569,14 @@ async def _search_symbol(args: dict) -> list[TextContent]:
 
     col = collection()
     if col.count() == 0:
-        return [TextContent(type="text", text="Index is empty — run `python indexer.py --full` first.")]
+        return [TextContent(type="text", text="Index is empty -- run `python indexer.py --full` first.")]
 
     where = {"file_path": {"$contains": path_filter}} if path_filter else None
 
     try:
         results = col.get(
             where=where,
-            where_document={"$contains": symbol},   # search within code text
+            where_document={"$contains": symbol},
             include=["documents", "metadatas"],
             limit=10,
         )
@@ -561,51 +596,21 @@ async def _search_symbol(args: dict) -> list[TextContent]:
         sym_str = f" | symbols: `{symbols}`" if symbols else ""
         header  = (
             f"### [{i+1}] `{meta['file_path']}` "
-            f"lines {meta['start_line']}–{meta['end_line']}{sym_str}"
+            f"lines {meta['start_line']}-{meta['end_line']}{sym_str}"
         )
         parts.append(f"{header}\n```{lang}\n{doc}\n```")
 
     return [TextContent(type="text", text=(
-        f"**`{symbol}` — found in {len(docs)} chunk(s)**\n\n" + "\n\n".join(parts)
+        f"**`{symbol}` -- found in {len(docs)} chunk(s)**\n\n" + "\n\n".join(parts)
     ))]
 
 
-async def _get_file(args: dict) -> list[TextContent]:
-    path       = args["path"].lstrip("/").replace("\\", "/")
-    start_line = args.get("start_line")
-    end_line   = args.get("end_line")
-    # Multi-root resolution: _orchestrator/ prefix → orchestrator root, else project root
-    if path.startswith("_orchestrator/"):
-        full_path = ORCHESTRATOR_ROOT / path[len("_orchestrator/"):]
-    else:
-        full_path = PROJECT_ROOT / path
-
-    if not full_path.exists():
-        return [TextContent(type="text", text=f"File not found: `{path}`")]
-
-    try:
-        content = full_path.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
-        return [TextContent(type="text", text=f"Error reading `{path}`: {e}")]
-
-    lines = content.split("\n")
-    s = (start_line - 1) if start_line else 0
-    e = end_line if end_line else len(lines)
-    lines = lines[s:e]
-
-    numbered = "\n".join(f"{s + i + 1:5d} | {line}" for i, line in enumerate(lines))
-    ext      = full_path.suffix.lstrip(".")
-    header   = f"**`{path}`** ({len(lines)} lines shown)"
-
-    return [TextContent(type="text", text=f"{header}\n```{ext}\n{numbered}\n```")]
-
-
-async def _list_files(args: dict) -> list[TextContent]:
+def _list_files_sync(args: dict) -> list[TextContent]:
     directory = args.get("directory", "").strip()
     col       = collection()
 
     if col.count() == 0:
-        return [TextContent(type="text", text="Index is empty — run `python indexer.py --full` first.")]
+        return [TextContent(type="text", text="Index is empty -- run `python indexer.py --full` first.")]
 
     all_metas = col.get(include=["metadatas"])["metadatas"]
     paths     = sorted({
@@ -620,28 +625,28 @@ async def _list_files(args: dict) -> list[TextContent]:
     return [TextContent(type="text", text=f"**{len(paths)} files**\n" + "\n".join(lines))]
 
 
-async def _status() -> list[TextContent]:
+def _status_sync() -> list[TextContent]:
     col   = collection()
     count = col.count()
 
     ts_file    = Path(__file__).parent / "last_indexed.txt"
     last_index = ts_file.read_text().strip() if ts_file.exists() else "Never"
 
+    model_status = "loaded" if _model_loaded else ("error: " + (_model_error or "loading..."))
+
     text = (
         f"**RAG Index Status**\n"
         f"- Chunks indexed : {count:,}\n"
         f"- Last indexed   : {last_index}\n"
         f"- Model          : {MODEL_NAME}\n"
+        f"- Model status   : {model_status}\n"
         f"- DB path        : {DB_PATH}\n"
         f"- Project root   : {PROJECT_ROOT}"
     )
     return [TextContent(type="text", text=text)]
 
 
-# ── Session memory tools ──────────────────────────────────────────────────────
-
-async def _search_past_sessions(args: dict) -> list[TextContent]:
-    """Find similar past sessions by semantic search."""
+def _search_past_sessions_sync(args: dict) -> list[TextContent]:
     query       = args["query"]
     max_results = min(int(args.get("max_results", 5)), 10)
 
@@ -696,8 +701,7 @@ async def _search_past_sessions(args: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"Session search error: {e}")]
 
 
-async def _index_session(args: dict) -> list[TextContent]:
-    """Store a completed session for future retrieval."""
+def _index_session_sync(args: dict) -> list[TextContent]:
     session_id    = args["session_id"]
     prompt        = args["prompt"]
     outcome       = args["outcome"]
@@ -732,21 +736,68 @@ async def _index_session(args: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"Session index error: {e}")]
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# ── Async wrappers (offload all work to thread pool) ────────────────────────
 
-_init_future: asyncio.Future | None = None
+async def _search(args: dict) -> list[TextContent]:
+    return await _offload(_search_sync, args)
+
+async def _search_multi(args: dict) -> list[TextContent]:
+    return await _offload(_search_multi_sync, args)
+
+async def _search_symbol(args: dict) -> list[TextContent]:
+    return await _offload(_search_symbol_sync, args)
+
+async def _get_file(args: dict) -> list[TextContent]:
+    # File I/O is fast but still offload to keep event loop pristine
+    return await _offload(_get_file_sync, args)
+
+async def _list_files(args: dict) -> list[TextContent]:
+    return await _offload(_list_files_sync, args)
+
+async def _status() -> list[TextContent]:
+    return await _offload(_status_sync)
+
+async def _search_past_sessions(args: dict) -> list[TextContent]:
+    return await _offload(_search_past_sessions_sync, args)
+
+async def _index_session(args: dict) -> list[TextContent]:
+    return await _offload(_index_session_sync, args)
+
+
+def _get_file_sync(args: dict) -> list[TextContent]:
+    path       = args["path"].lstrip("/").replace("\\", "/")
+    start_line = args.get("start_line")
+    end_line   = args.get("end_line")
+    if path.startswith("_orchestrator/"):
+        full_path = ORCHESTRATOR_ROOT / path[len("_orchestrator/"):]
+    else:
+        full_path = PROJECT_ROOT / path
+
+    if not full_path.exists():
+        return [TextContent(type="text", text=f"File not found: `{path}`")]
+
+    try:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error reading `{path}`: {e}")]
+
+    lines = content.split("\n")
+    s = (start_line - 1) if start_line else 0
+    e = end_line if end_line else len(lines)
+    lines = lines[s:e]
+
+    numbered = "\n".join(f"{s + i + 1:5d} | {line}" for i, line in enumerate(lines))
+    ext      = full_path.suffix.lstrip(".")
+    header   = f"**`{path}`** ({len(lines)} lines shown)"
+
+    return [TextContent(type="text", text=f"{header}\n```{ext}\n{numbered}\n```")]
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 
 async def main():
-    global _init_future
-    loop = asyncio.get_event_loop()
-    # Start loading model+chroma in a thread — does not block the event loop.
-    # Tool calls will await this future before doing any embedding work.
-    _init_future = loop.run_in_executor(None, _load_resources)
-
     async with stdio_server() as (read_stream, write_stream):
-        # server.run() handles the MCP handshake immediately.
-        # _init_future is awaited lazily inside tool calls.
         await server.run(
             read_stream,
             write_stream,
@@ -755,4 +806,23 @@ async def main():
 
 
 if __name__ == "__main__":
+    t_start = time.monotonic()
+
+    # Init ChromaDB synchronously (fast, <1s) so non-embedding tools work
+    # immediately after the MCP handshake.
+    try:
+        _init_chroma()
+    except Exception as exc:
+        print(f"[rag-mcp] ChromaDB init failed: {exc}", file=sys.stderr, flush=True)
+
+    # Load the embedding model BEFORE starting the MCP stdio transport.
+    # On Windows, stdin pipe reads hold the GIL, blocking ALL background
+    # threads — so the model MUST load before stdio starts. This takes
+    # ~40-60s but the MCP timeout in .mcp.json is set to 300s to accommodate.
+    err = _load_model_sync()
+    if err:
+        print(f"[rag-mcp] WARNING: {err}", file=sys.stderr, flush=True)
+        print("[rag-mcp] Embedding tools will not be available.", file=sys.stderr, flush=True)
+
+    print(f"[rag-mcp] Server starting ({time.monotonic()-t_start:.1f}s startup)...", file=sys.stderr, flush=True)
     asyncio.run(main())

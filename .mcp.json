@@ -3,7 +3,8 @@
     "codebase-rag": {
       "command": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
       "args": ["src\\rag_mcp\\server.py"],
-      "cwd": "C:\\Users\\Admin\\Documents\\GitHub\\ai_orchestrator"
+      "cwd": "C:\\Users\\Admin\\Documents\\GitHub\\ai_orchestrator",
+      "timeout": 300
     },
     "sequential-thinking": {
       "command": "cmd",

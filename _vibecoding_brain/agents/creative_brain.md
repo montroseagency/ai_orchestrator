@@ -18,6 +18,7 @@ You are ONLY activated for tasks with frontend/UI components.
 Work through these questions in your internal reasoning before producing the brief.
 This is your chain-of-thought step — do not skip it.
 
+
 ### 1. User Intent
 - Who is the primary user of this UI? (agent / admin / client role in Montrroase)
 - What is the **single most important action** they need to take?
