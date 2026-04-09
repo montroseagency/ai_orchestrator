@@ -74,12 +74,39 @@ Assess three dimensions:
 
 ### Step 3 — Choose Execution Strategy
 
-| Complexity | What to Do |
-|---|---|
-| **TRIVIAL** | Handle it yourself. No agents. No artifacts. |
-| **SIMPLE** | 1-2 team agents. Brief walkthrough only. |
-| **MEDIUM** | Planner → Implementer → Tester(s). Creative Brain if frontend-visible. Full artifacts. |
-| **COMPLEX** | Full team: Planner → Creative Brain (if frontend) → Implementer → All relevant testers. Full artifacts. |
+| Complexity | Domain | What to Do |
+|---|---|---|
+| **TRIVIAL** | Any | Handle it yourself. No agents. No artifacts. |
+| **SIMPLE** | Single domain | 1 implementer → 1 tester (optional for LOW risk). Brief walkthrough only. |
+| **SIMPLE** | FULLSTACK | 1 implementer → relevant tester. Brief walkthrough. |
+| **MEDIUM** | FRONTEND | Planner → Creative Brain → impl-frontend → ui-tester. Full artifacts. |
+| **MEDIUM** | BACKEND | Planner → impl-backend → backend-tester. Full artifacts. |
+| **MEDIUM** | FULLSTACK | Planner → **parallel lanes** → code-reviewer → testers. Full artifacts. See Parallel Execution below. |
+| **COMPLEX** | Any | Same as MEDIUM but all agents use opus. Full artifacts + reflection. |
+
+**FULLSTACK Parallel Execution (MEDIUM+ only):**
+```
+[Orchestrator: RAG Context Assembly]
+              |
+        [Planner] → plan.md
+         /                \
+[impl-backend]      [Creative Brain] → design_brief.md
+     |                       |
+     |                [impl-frontend]
+     |                       |
+[backend-tester]       [ui-tester]
+      \                    /
+      [code-reviewer]  ← contract alignment check
+              |
+       [Quality Gate: tsc/eslint/ruff]
+              |
+          [Wrap Up]
+```
+- `impl-backend` starts right after the planner — does NOT need the design brief
+- `impl-frontend` waits for BOTH planner AND creative brain
+- Both implementers run concurrently in the same response turn
+- Both testers run concurrently after their respective implementer finishes
+- Code reviewer checks frontend-backend contract alignment BEFORE domain testers
 
 **Refer to `AGENTS.md`** for which agents to spawn, what model to use, and which skills to inject.
 
@@ -90,27 +117,38 @@ Assess three dimensions:
 3. `TaskUpdate` with `addBlockedBy` for sequential work
 4. `TaskUpdate` with `owner` matching agent `name`
 
-### Step 5 — Gather Context
+### Step 5 — RAG Context Assembly
 
-**a) MCP semantic search** (if RAG MCP is responsive — skip if hanging >30s):
-- `search_codebase` with natural language query from the task
-- `search_symbol` if task mentions a specific function/class/component
-- `search_past_sessions` for historical context
+**IMPORTANT:** MCP tools are only available to you (the orchestrator). Team agents do NOT have MCP access. You MUST run all searches before spawning agents, then package results into a **Context Package** embedded in each agent's prompt. See `_vibecoding_brain/context/context_package_template.md` for the full template and agent-specific slicing rules.
 
-**b) Read source files** — Read actual files that will be MODIFIED. Embed full content when passing to agents.
+**Phase A — Broad Discovery (always run):**
+1. `search_multi` with 2-3 queries: raw task description, "existing implementation of {feature}", related component/endpoint names
+2. `search_past_sessions` with the task description for similar prior work
 
-**c) Problem rules** — Check `rules.md` for matching rules. Pass relevant ones to planner and implementer.
+**Phase B — Symbol Lookup (if task names specific code):**
+3. `search_symbol` for each named function/class/component mentioned in the task
+4. `get_file` for any file paths mentioned in the task
 
-**IMPORTANT:** MCP tools are only available to you (the orchestrator). Team agents do NOT have MCP access. You must run searches before spawning agents and embed results in their prompts.
+**Phase C — Contract Discovery (FULLSTACK tasks only):**
+5. `search_codebase` with "API endpoint for {feature}" to find related backend endpoints
+6. `search_symbol` for the relevant API method name in `api.ts`
+
+**Phase D — Build Context Package:**
+7. Filter RAG results: discard below 25% relevance, deduplicate, sort by score, cap at 5 per section
+8. Read FULL contents of files that will be MODIFIED (not just RAG chunks)
+9. Filter `rules.md` by domain tag — pass only matching rules to each agent
+10. Assemble the Context Package using the template, sliced per agent (see template for slicing table)
+
+**Fallback (if RAG MCP unresponsive >30s):**
+- `Glob` patterns based on task keywords
+- `Grep` for symbol names in likely directories (`client/lib/`, `server/api/views/`, `server/api/urls.py`)
+- Direct `Read` of files referenced in `context/project_index.md`
 
 ### Step 6 — Spawn Agents
 
 Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. Each agent prompt must include:
-- Task description and context
-- Relevant file contents (full — never summarize code)
-- Architecture rules
+- Task description and the agent's **Context Package slice** (from Step 5)
 - Injected skills (see AGENTS.md Skill Injection Table)
-- Matching problem prevention rules
 - Instruction to mark their task as completed when done
 
 **Embedding format for files in agent prompts:**
@@ -121,11 +159,32 @@ Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. Ea
 \`\`\`
 ```
 
-**Parallel execution:** When work is independent (e.g. backend + frontend), spawn multiple agents in the same response turn.
+**Parallel execution rules:**
+- Spawn multiple agents in the SAME response turn when their work is independent
+- For FULLSTACK MEDIUM+: spawn `impl-backend` + Creative Brain in parallel (backend doesn't need design brief)
+- After Creative Brain finishes, spawn `impl-frontend` with both plan.md and design_brief.md
+- After both implementers finish, spawn `backend-tester` + `ui-tester` in parallel
+- For single-domain tasks: spawn agents sequentially as before
 
-### Step 7 — Self-Healing & Quality Gate
+**Implementer selection:**
+- SIMPLE or single-domain MEDIUM+: use `implementer` (the general-purpose one)
+- FULLSTACK MEDIUM+: use `impl-frontend` + `impl-backend` (parallel specializations)
 
-After implementation:
+### Step 7 — Code Review Gate (FULLSTACK MEDIUM+ only)
+
+After BOTH implementers finish, spawn the **code-reviewer** agent to verify frontend-backend contract alignment. Skip for single-domain tasks.
+
+The code-reviewer receives:
+- All files written by both implementers (full contents)
+- Both implementers' output summaries (endpoint URLs, field names, dependencies)
+- plan.md and architecture rules
+- Injected skills: `contract_review.md` + `code_review.md`
+
+If FAIL: send fix instructions to the relevant implementer(s) via `SendMessage`. The code reviewer specifies which side to fix (usually frontend adapts to backend).
+
+### Step 8 — Self-Healing & Quality Gate
+
+After implementation (and code review if applicable):
 ```bash
 # Frontend
 npx tsc --noEmit 2>&1 | head -50
@@ -144,17 +203,21 @@ python3 -m ruff check <file> 2>&1 | head -50
 
 If any match: send fix instructions to implementer via `SendMessage`.
 
-### Step 8 — Test Loop (max 8 iterations)
+### Step 9 — Test Loop (max 8 iterations)
 
 Skip for TRIVIAL. Optional for SIMPLE with LOW risk.
 
-Spawn tester(s) as team agents (see AGENTS.md for which testers to use per domain). If FAIL, send fix instructions to implementer via `SendMessage` — do NOT re-spawn. If same issue appears 3 consecutive times, mark `stuck` and stop.
+Spawn tester(s) as team agents (see AGENTS.md for which testers to use per domain):
+- **FULLSTACK:** spawn `backend-tester` + `ui-tester` in parallel (same response turn)
+- **Single domain:** spawn the matching tester only
 
-### Step 9 — Problem Tracking (fix: tasks only)
+If FAIL, send fix instructions to the relevant implementer via `SendMessage` — do NOT re-spawn the tester. If same issue appears 3 consecutive times, mark `stuck` and stop.
+
+### Step 10 — Problem Tracking (fix: tasks only)
 
 On successful `fix:` tasks, spawn problem-tracker agent to write a prevention rule.
 
-### Step 10 — Wrap Up
+### Step 11 — Wrap Up
 
 **TRIVIAL:** Report changes. Done.
 **SIMPLE:** Write walkthrough to `_vibecoding_brain/sessions/{session_id}/walkthrough.md`.
@@ -187,7 +250,7 @@ Session artifacts go in `_vibecoding_brain/sessions/{session_id}/`. Generate `se
 7. One team at a time — delete previous before creating new
 
 ### Context Compression
-Between agents, compress outputs to <200 words. **Exception**: implementer and tester MUST receive full file contents.
+Between agents, compress outputs to <200 words. **Exception**: implementers, testers, and code-reviewer MUST receive full file contents.
 
 ### Reflection on Retry (N > 1)
 > "Attempt {N}/8. Before retrying: 1) What specifically failed? 2) What is ONE concrete change to fix it? 3) Are you repeating the same approach? If yes, try fundamentally different. Fix EXACTLY these issues — do not refactor."
@@ -198,3 +261,4 @@ Between agents, compress outputs to <200 words. **Exception**: implementer and t
 - `project_index.md` — Key files with descriptions
 - `montrroase_guide.md` — Business domain, user roles, features, data flows
 - `modal_guide.md` — Modal building patterns (read when task involves modals)
+- `context_package_template.md` — Template for assembling Context Packages + RAG query protocol + agent slicing table

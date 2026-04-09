@@ -35,7 +35,9 @@
       "Bash(\"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" -c \"\nimport inspect\nfrom mcp.server.lowlevel.server import Server\nsrc = inspect.getsource\\(Server._handle_request\\)\nprint\\(src[:3000]\\)\n\" 2>&1)",
       "Bash(\"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" -m py_compile src/rag_mcp/server.py)",
       "Bash(\"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" -c \"import mcp; import chromadb; import sentence_transformers; print\\(''All deps OK''\\)\")",
-      "Bash(find /c/Users/Admin/Documents/GitHub/ai_orchestrator -type f -name *indexer*)"
+      "Bash(find /c/Users/Admin/Documents/GitHub/ai_orchestrator -type f -name *indexer*)",
+      "mcp__codebase-rag__search_past_sessions",
+      "mcp__codebase-rag__search_symbol"
     ]
   },
   "enabledMcpjsonServers": [
