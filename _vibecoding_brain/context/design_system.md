@@ -1,5 +1,5 @@
 # Montrroase Design System
-> For Creative Brain agent. Full design token reference.
+> For Planning agent. Full design token reference.
 
 ## Color Palette
 ```
