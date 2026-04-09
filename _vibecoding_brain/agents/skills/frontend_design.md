@@ -1,5 +1,5 @@
 ## Skill: Frontend Design Patterns (Montrroase)
-> Injected for: creative_brain, implementer on FRONTEND / FULLSTACK / DESIGN tasks.
+> Injected for: architect, implementer, impl-frontend on FRONTEND / FULLSTACK / DESIGN tasks.
 > When this skill conflicts with Montrroase design_system.md tokens, design_system.md takes precedence.
 
 ### Anti-AI-Slop Patterns -- INSTANT FAIL

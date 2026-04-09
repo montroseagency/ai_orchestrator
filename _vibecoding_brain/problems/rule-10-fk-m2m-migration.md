@@ -9,7 +9,7 @@
    - Frontend type in `client/lib/types.ts` (singular `string` → `string[]` or similar)
    - All components that read or write that field (forms, display tables, detail views)
    - API method in `client/lib/api.ts` — verify request body shape matches new serializer expectations
-2. Use the code-reviewer to verify all references are updated before marking the task done — search for the old field name with `grep -r "specialization" client/` (singular form) after migrating to plural
+2. Use the contract-reviewer to verify URL/payload/auth alignment between frontend and backend before marking the task done — and separately grep for the old field name with `grep -r "specialization" client/` (singular form) after migrating to plural
 3. Test round-trip: create → edit → save → verify all values persisted, especially for multi-value cases
 4. Never assume renaming a field in the serializer is isolated to the backend — grep the entire codebase for the old field name before shipping
 

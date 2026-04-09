@@ -1,5 +1,5 @@
 # Montrroase Tech Stack Reference
-> For Planner and Implementer agents. Architectural decisions and stack specifics.
+> For Architect and Implementer agents. Architectural decisions and stack specifics.
 
 ## Frontend (Next.js 15 / React 19)
 

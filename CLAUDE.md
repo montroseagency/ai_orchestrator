@@ -76,39 +76,53 @@ Assess three dimensions:
 
 | Complexity | Domain | What to Do |
 |---|---|---|
-| **TRIVIAL** | Any | Handle it yourself. No agents. No artifacts. |
-| **SIMPLE** | Single domain | 1 implementer → 1 tester (optional for LOW risk). Brief walkthrough only. |
-| **SIMPLE** | FULLSTACK | 1 implementer → relevant tester. Brief walkthrough. |
-| **MEDIUM** | FRONTEND | Planner → Creative Brain → impl-frontend → ui-tester. Full artifacts. |
-| **MEDIUM** | BACKEND | Planner → impl-backend → backend-tester. Full artifacts. |
-| **MEDIUM** | FULLSTACK | Planner → **parallel lanes** → code-reviewer → testers. Full artifacts. See Parallel Execution below. |
-| **COMPLEX** | Any | Same as MEDIUM but all agents use opus. Full artifacts + reflection. |
+| **TRIVIAL** | Any | Handle it yourself. No agents. No artifacts. No git checkpoint. |
+| **SIMPLE** | Single domain | 1 `implementer` → quality gate. No architect, no contract review, no AI tester. Brief walkthrough. |
+| **SIMPLE** | FULLSTACK | 1 `implementer` → quality gate. Brief walkthrough. |
+| **MEDIUM** | FRONTEND | 1 `implementer` (does its own Chain-of-Thought planning) → quality gate. Full artifacts. |
+| **MEDIUM** | BACKEND | 1 `implementer` (does its own CoT planning) → quality gate. Full artifacts. |
+| **MEDIUM** | FULLSTACK | `impl-backend` → `impl-frontend` → `contract-reviewer` → quality gate. **Sequential.** Full artifacts. See Sequential Execution below. |
+| **COMPLEX** | Any | `architect` → (impl-backend → impl-frontend → contract-reviewer for FULLSTACK, else single implementer) → quality gate. All agents use opus. Full artifacts + reflection. |
 
-**FULLSTACK Parallel Execution (MEDIUM+ only):**
+**FULLSTACK Sequential Execution (MEDIUM+):**
 ```
-[Orchestrator: RAG Context Assembly]
-              |
-        [Planner] → plan.md
-         /                \
-[impl-backend]      [Creative Brain] → design_brief.md
-     |                       |
-     |                [impl-frontend]
-     |                       |
-[backend-tester]       [ui-tester]
-      \                    /
-      [code-reviewer]  ← contract alignment check
-              |
-       [Quality Gate: tsc/eslint/ruff]
-              |
-          [Wrap Up]
+[Orchestrator: RAG Context Assembly + dependency-graph walk]
+              ↓
+[Pre-pipeline git checkpoint]
+              ↓
+[architect] → architect_brief.md      (COMPLEX only; MEDIUM skips this)
+              ↓
+[impl-backend]  — emits "## API Contract" block (source of truth)
+              ↓
+[impl-frontend] — derives types/api.ts from the API Contract block verbatim
+              ↓
+[contract-reviewer] — 4 checks only: URLs, methods, payload keys, auth
+              ↓
+[Quality Gate: tsc / eslint / ruff + banned-pattern scan]
+              ↓
+[Post-quality-gate git checkpoint]
+              ↓
+[Wrap Up — hand off to human for visual review]
 ```
-- `impl-backend` starts right after the planner — does NOT need the design brief
-- `impl-frontend` waits for BOTH planner AND creative brain
-- Both implementers run concurrently in the same response turn
-- Both testers run concurrently after their respective implementer finishes
-- Code reviewer checks frontend-backend contract alignment BEFORE domain testers
+
+**Why sequential, not parallel:** Running backend and frontend in parallel forces the frontend to guess the API contract. With sequential execution, `impl-backend` finalizes the contract first and hands it to `impl-frontend` as a single source of truth — no guessing, no drift.
 
 **Refer to `AGENTS.md`** for which agents to spawn, what model to use, and which skills to inject.
+
+### Step 3.5 — Pre-pipeline Git Checkpoint (SIMPLE and above)
+
+Before spawning any agent, commit the current working tree as a safety net:
+
+```bash
+git status --porcelain  # sanity check — warn the user if there is unfamiliar uncommitted work not authored by the pipeline
+git add . && git commit -m "chore: pre-agent checkpoint [{session_id}]" --allow-empty
+```
+
+**Rules:**
+- Never push, never force, never amend. Ever.
+- If this commit fails (e.g., pre-commit hook rejects), log and continue — never abort the pipeline on a checkpoint failure.
+- If `git status` shows unfamiliar uncommitted changes that the user did not mention, pause and confirm with the user before committing their in-progress work.
+- Rollback for the entire pipeline: `git reset --hard HEAD~2` (undoes both pre and post checkpoints, returning to the exact state before the pipeline ran).
 
 ### Step 4 — Create Team & Tasks (SIMPLE and above)
 
@@ -119,25 +133,31 @@ Assess three dimensions:
 
 ### Step 5 — RAG Context Assembly
 
-**IMPORTANT:** MCP tools are only available to you (the orchestrator). Team agents do NOT have MCP access. You MUST run all searches before spawning agents, then package results into a **Context Package** embedded in each agent's prompt. See `_vibecoding_brain/context/context_package_template.md` for the full template and agent-specific slicing rules.
+**IMPORTANT:** MCP tools are only available to you (the orchestrator). Team agents do NOT have MCP access. You MUST run all searches before spawning agents, then package results into a **Context Package** embedded in each agent's prompt. See `_vibecoding_brain/context/context_package_template.md` for the full template, prompt-caching order, and agent-specific slicing rules.
 
 **Phase A — Broad Discovery (always run):**
 1. `search_multi` with 2-3 queries: raw task description, "existing implementation of {feature}", related component/endpoint names
 2. `search_past_sessions` with the task description for similar prior work
+3. **FRONTEND / FULLSTACK tasks only:** `search_codebase` with `"design tokens for {UI element in task}"` (e.g., "design tokens for button hover state"). Top 5 hits form the `## Design Tokens` Context Package slice. **Do not bulk-inject `design_system.md`** — targeted RAG slices only.
 
 **Phase B — Symbol Lookup (if task names specific code):**
-3. `search_symbol` for each named function/class/component mentioned in the task
-4. `get_file` for any file paths mentioned in the task
+4. `search_symbol` for each named function/class/component mentioned in the task
+5. **Dependency-graph walk (after identifying each MODIFY target):**
+   - **Preferred:** call `get_file_imports` MCP tool → `get_file` for each returned path.
+   - **Interim fallback (until `get_file_imports` ships):** `Grep` the target file for `^(import|from) .* ['"](\.\.?/[^'"]+)['"]` (TS/JS) or `^from (\.\.?\w+) import` (Python). Resolve relative paths against the target's directory. `Read` each resolved file.
+   - Cap at 10 imported files total. Skip `node_modules`, stdlib, and external packages.
+   - Embed them in the Context Package under `### Imported Dependencies`.
+6. `get_file` for any file paths mentioned in the task
 
 **Phase C — Contract Discovery (FULLSTACK tasks only):**
-5. `search_codebase` with "API endpoint for {feature}" to find related backend endpoints
-6. `search_symbol` for the relevant API method name in `api.ts`
+7. `search_codebase` with "API endpoint for {feature}" to find related backend endpoints
+8. `search_symbol` for the relevant API method name in `api.ts`
 
 **Phase D — Build Context Package:**
-7. Filter RAG results: discard below 25% relevance, deduplicate, sort by score, cap at 5 per section
-8. Read FULL contents of files that will be MODIFIED (not just RAG chunks)
-9. Filter `rules.md` by domain tag — pass only matching rules to each agent
-10. Assemble the Context Package using the template, sliced per agent (see template for slicing table)
+9. Filter RAG results: discard below 25% relevance, deduplicate, sort by score, cap at 5 per section
+10. Read FULL contents of files that will be MODIFIED (not just RAG chunks)
+11. Filter `rules.md` by domain tag — pass only matching rules to each agent (goes in the static prefix, not the Context Package)
+12. Assemble the Context Package using the template, sliced per agent (see template for slicing table)
 
 **Fallback (if RAG MCP unresponsive >30s):**
 - `Glob` patterns based on task keywords
@@ -146,12 +166,24 @@ Assess three dimensions:
 
 ### Step 6 — Spawn Agents
 
-Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. Each agent prompt must include:
-- Task description and the agent's **Context Package slice** (from Step 5)
-- Injected skills (see AGENTS.md Skill Injection Table)
-- Instruction to mark their task as completed when done
+Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. **Assemble every agent's prompt in this exact STATIC → DYNAMIC order** so Claude's prefix cache fires across spawns within the 5-minute window:
 
-**Embedding format for files in agent prompts:**
+```
+─── STATIC (cacheable prefix — identical across spawns) ───
+1. Agent identity & instructions   (from agents/{agent}.md)
+2. Injected skills                 (from agents/skills/*.md — see AGENTS.md Skill Injection table)
+3. Architecture rules              (the "Architecture Rules" section above, verbatim)
+4. Domain-filtered prevention rules (from problems/rules.md, filtered by [FRONTEND]/[BACKEND]/[FULLSTACK]/[DATABASE]/[DESIGN])
+─── <!-- CACHE BOUNDARY --> ───
+─── DYNAMIC (per-task) ───
+5. Task description
+6. Context Package                 (RAG results + Design Tokens + Source Files + Imported Dependencies + Backend API Contract)
+7. Completion instruction          ("Mark your task as completed via TaskUpdate when done.")
+```
+
+**Never interleave dynamic content into the static prefix.** Putting the task description or file contents above the architecture rules breaks the cache key and forces a cold read on every spawn. The `<!-- CACHE BOUNDARY -->` marker is a documentation comment — no runtime effect, but it helps you visually verify the split while assembling prompts.
+
+**Embedding format for files in agent prompts** (inside the Context Package, dynamic section):
 ```
 ## File: path/to/file.tsx
 \`\`\`tsx
@@ -159,59 +191,76 @@ Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. Ea
 \`\`\`
 ```
 
-**Parallel execution rules:**
-- Spawn multiple agents in the SAME response turn when their work is independent
-- For FULLSTACK MEDIUM+: spawn `impl-backend` + Creative Brain in parallel (backend doesn't need design brief)
-- After Creative Brain finishes, spawn `impl-frontend` with both plan.md and design_brief.md
-- After both implementers finish, spawn `backend-tester` + `ui-tester` in parallel
-- For single-domain tasks: spawn agents sequentially as before
+**Sequential execution rules:**
+- **FULLSTACK MEDIUM+:** spawn `impl-backend` → wait for its summary → extract the `## API Contract` block → spawn `impl-frontend` with the Contract block embedded in its Context Package → wait → spawn `contract-reviewer`. Never parallel.
+- **Single-domain MEDIUM+:** spawn the single `implementer` and wait.
+- **COMPLEX FULLSTACK:** prepend an `architect` spawn before `impl-backend`; `impl-backend` receives `architect_brief.md` and the Context Package.
 
 **Implementer selection:**
-- SIMPLE or single-domain MEDIUM+: use `implementer` (the general-purpose one)
-- FULLSTACK MEDIUM+: use `impl-frontend` + `impl-backend` (parallel specializations)
+- SIMPLE or single-domain MEDIUM+: use `implementer` (general-purpose).
+- FULLSTACK MEDIUM+: use `impl-backend` → `impl-frontend` (sequential specializations).
 
-### Step 7 — Code Review Gate (FULLSTACK MEDIUM+ only)
+### Step 7 — Contract Review Gate (FULLSTACK MEDIUM+ only)
 
-After BOTH implementers finish, spawn the **code-reviewer** agent to verify frontend-backend contract alignment. Skip for single-domain tasks.
+After `impl-frontend` finishes, spawn the **contract-reviewer** agent. Skip for single-domain tasks.
 
-The code-reviewer receives:
-- All files written by both implementers (full contents)
-- Both implementers' output summaries (endpoint URLs, field names, dependencies)
-- plan.md and architecture rules
-- Injected skills: `contract_review.md` + `code_review.md`
+The contract-reviewer receives:
+- `impl-backend`'s `## API Contract` block (source of truth)
+- `client/lib/api.ts` and `client/lib/types.ts` (full contents)
+- The new/modified Django `urls.py`, views, and serializers (full contents)
+- Injected skill: `contract_review.md`
 
-If FAIL: send fix instructions to the relevant implementer(s) via `SendMessage`. The code reviewer specifies which side to fix (usually frontend adapts to backend).
+It checks exactly four things: URLs, HTTP methods, payload key mapping, auth headers. Nothing else. Single PASS/FAIL verdict.
 
-### Step 8 — Self-Healing & Quality Gate
+If FAIL: send the fix instructions to the relevant implementer via `SendMessage`. Default: the frontend adapts to the backend.
 
-After implementation (and code review if applicable):
+### Step 8 — Deterministic Quality Gate (max 8 iterations)
+
+This is the **sole** quality gate. There are no LLM testers in the pipeline. After implementation (and contract review if applicable), run:
+
 ```bash
-# Frontend
-npx tsc --noEmit 2>&1 | head -50
-npx eslint <changed-files> 2>&1 | head -50
-# Backend
-python3 -m ruff check <file> 2>&1 | head -50
+# Frontend — only if client/ files changed
+cd Montrroase_website/client
+npx tsc --noEmit 2>&1 | head -80
+npx eslint <changed-files> 2>&1 | head -80
+
+# Backend — only if server/ files changed
+cd Montrroase_website/server
+python3 -m ruff check <changed-files> 2>&1 | head -80
+python3 -m ruff format --check <changed-files> 2>&1 | head -40
 ```
 
-**Quality gate** — check modified frontend files for banned patterns:
-- `bg-gradient-to` / `from-purple` / `to-blue` (AI-slop gradients)
-- `rounded-2xl` (must use graduated border-radius)
-- `import ... from 'lucide-react'` (must use Phosphor)
-- `font-bold` / `font-[700]` (max weight 600 unless page heading)
-- Raw tailwind colors like `bg-zinc-*`, `text-indigo-*`
-- Emojis as UI elements
+**Banned-pattern scan** — grep modified frontend files for AI-slop tells that tsc/eslint won't catch:
+- `bg-gradient-to` / `from-purple` / `to-blue` — AI-slop gradients
+- `rounded-2xl` — must use graduated border-radius (4/6/8/12px)
+- `import ... from 'lucide-react'` — must use Phosphor
+- `font-bold` / `font-\[700\]` — max weight 600 unless page heading
+- Raw Tailwind scales like `bg-zinc-*`, `text-indigo-*`, `bg-slate-*` — must use CSS custom properties
+- Emojis used as UI elements
 
-If any match: send fix instructions to implementer via `SendMessage`.
+**Write-on-existing-file scan** — if the implementer's tool-call log shows a `Write` call on a path that existed pre-pipeline, that is a tool-rule violation. Send it back.
 
-### Step 9 — Test Loop (max 8 iterations)
+**On any failure:** send the exact compiler/linter output + the violating file paths to the implementer via `SendMessage` with the Reflection-on-Retry prompt. The implementer edits, you re-run the gate. Max 8 iterations. If the same error persists 3 consecutive iterations, mark `stuck` and stop.
 
-Skip for TRIVIAL. Optional for SIMPLE with LOW risk.
+### Step 8.5 — Post-quality-gate Git Checkpoint
 
-Spawn tester(s) as team agents (see AGENTS.md for which testers to use per domain):
-- **FULLSTACK:** spawn `backend-tester` + `ui-tester` in parallel (same response turn)
-- **Single domain:** spawn the matching tester only
+Once the quality gate passes, commit the known-good snapshot:
 
-If FAIL, send fix instructions to the relevant implementer via `SendMessage` — do NOT re-spawn the tester. If same issue appears 3 consecutive times, mark `stuck` and stop.
+```bash
+git add . && git commit -m "chore: post-agent checkpoint [{session_id}]"
+```
+
+This is the point of no return for the pipeline. If the human reviewer later rejects the work, `git reset --hard HEAD~1` restores the pre-pipeline state while keeping the post-commit as a reference for what was produced. Full pipeline rollback: `git reset --hard HEAD~2`.
+
+Never push, never force, never amend.
+
+### Step 9 — Human Visual Review (FRONTEND / FULLSTACK only)
+
+There is no AI UI tester. After the quality gate and checkpoint, report to the user:
+
+> Quality gate passed. Ready for your visual review.
+
+List the files touched and the dev-server URL (if available). The human owns the visual-correctness verdict. If the user rejects, collect their feedback and feed it back to the implementer as a new iteration.
 
 ### Step 10 — Problem Tracking (fix: tasks only)
 
@@ -250,15 +299,15 @@ Session artifacts go in `_vibecoding_brain/sessions/{session_id}/`. Generate `se
 7. One team at a time — delete previous before creating new
 
 ### Context Compression
-Between agents, compress outputs to <200 words. **Exception**: implementers, testers, and code-reviewer MUST receive full file contents.
+Between agents, compress summaries to <200 words. **Exceptions:** implementers and `contract-reviewer` MUST receive full file contents (via the Context Package), and `impl-frontend` MUST receive `impl-backend`'s full `## API Contract` block verbatim.
 
 ### Reflection on Retry (N > 1)
 > "Attempt {N}/8. Before retrying: 1) What specifically failed? 2) What is ONE concrete change to fix it? 3) Are you repeating the same approach? If yes, try fundamentally different. Fix EXACTLY these issues — do not refactor."
 
 ### Context Docs (in `_vibecoding_brain/context/`)
-- `design_system.md` — Full design tokens, component patterns
+- `design_system.md` — Full design tokens. **RAG source only — never bulk-inject. Use targeted `search_codebase` queries to pull task-relevant snippets.**
 - `tech_stack.md` — Stack decisions, testing, deployment
 - `project_index.md` — Key files with descriptions
 - `montrroase_guide.md` — Business domain, user roles, features, data flows
 - `modal_guide.md` — Modal building patterns (read when task involves modals)
-- `context_package_template.md` — Template for assembling Context Packages + RAG query protocol + agent slicing table
+- `context_package_template.md` — Template for assembling Context Packages + prompt-cache ordering + RAG query protocol + agent slicing table

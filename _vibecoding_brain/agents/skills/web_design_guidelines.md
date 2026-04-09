@@ -1,5 +1,5 @@
 ## Skill: Web Design Guidelines (Modern SaaS)
-> Injected for: creative_brain, ui_ux_tester on FRONTEND / FULLSTACK / DESIGN tasks.
+> Injected for: architect on FRONTEND / FULLSTACK / DESIGN tasks.
 > Opinionated toward the Linear/Vercel/Stripe aesthetic that Montrroase targets.
 
 ### Design Philosophy

@@ -93,7 +93,7 @@ See `_vibecoding_brain/problems/rule-9-assignment-guards.md` for full detail.
 
 **Why:** Changing `specialization` (FK, string) to `specializations` (M2M, array) on the backend without updating the frontend type caused silent data loss — multi-specialization agents couldn't round-trip through the edit form. Contract verification happened after implementation.
 
-**How to apply:** Treat FK→M2M (or any field shape change) as a breaking API contract change. Update simultaneously: model, serializer, `client/lib/types.ts`, all consuming components, and `client/lib/api.ts`. Grep for the old field name across the entire codebase before shipping. Use code-reviewer to verify all references are consistent.
+**How to apply:** Treat FK→M2M (or any field shape change) as a breaking API contract change. Update simultaneously: model, serializer, `client/lib/types.ts`, all consuming components, and `client/lib/api.ts`. Grep for the old field name across the entire codebase before shipping. Use contract-reviewer to verify URL/field-name/auth alignment between frontend and backend.
 
 See `_vibecoding_brain/problems/rule-10-fk-m2m-migration.md` for full detail.
 
