@@ -46,7 +46,8 @@ Phase A — Foundation (must ship first, in order)
   build: HQ Directory. Extend Agent model with public team profile fields: bio, pronouns, timezone, working hours, current focus, fun facts, birthday,
    work anniversary, skills. DRF endpoint /api/team/directory/. Frontend: department filter sidebar, card grid (workspace_ui.md §5), profile detail   
   page with About/Activity/Schedule/Kudos tabs. Live local-time updating. Respect existing Agent access controls — this is a public-to-team layer, not
-   a new identity.
+   a new identity.   
+   
 
   C2. Announcements (category 3)
   build: HQ Announcements. New model TeamAnnouncement with category, title, cover image, body, author, read_receipts (M2M through

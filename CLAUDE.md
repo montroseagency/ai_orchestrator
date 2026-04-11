@@ -111,14 +111,18 @@ Assess three dimensions:
 
 ### Step 3.5 — Pre-pipeline Git Checkpoint (SIMPLE and above)
 
-Before spawning any agent, commit the current working tree as a safety net:
+Before spawning any agent, commit the current working tree as a safety net.
+
+**IMPORTANT: The `ai_orchestrator/` directory and `Montrroase_website/` are SEPARATE git repositories.** `Montrroase_website/` is gitignored by the orchestrator repo. All git checkpoints and commits for pipeline work MUST be run inside `Montrroase_website/`:
 
 ```bash
+cd Montrroase_website
 git status --porcelain  # sanity check — warn the user if there is unfamiliar uncommitted work not authored by the pipeline
 git add . && git commit -m "chore: pre-agent checkpoint [{session_id}]" --allow-empty
 ```
 
 **Rules:**
+- **Always `cd Montrroase_website` before any git operation** — running git at the orchestrator root will not see project file changes.
 - Never push, never force, never amend. Ever.
 - If this commit fails (e.g., pre-commit hook rejects), log and continue — never abort the pipeline on a checkpoint failure.
 - If `git status` shows unfamiliar uncommitted changes that the user did not mention, pause and confirm with the user before committing their in-progress work.
@@ -244,15 +248,16 @@ python3 -m ruff format --check <changed-files> 2>&1 | head -40
 
 ### Step 8.5 — Post-quality-gate Git Checkpoint
 
-Once the quality gate passes, commit the known-good snapshot:
+Once the quality gate passes, commit the known-good snapshot **inside `Montrroase_website/`**:
 
 ```bash
+cd Montrroase_website
 git add . && git commit -m "chore: post-agent checkpoint [{session_id}]"
 ```
 
 This is the point of no return for the pipeline. If the human reviewer later rejects the work, `git reset --hard HEAD~1` restores the pre-pipeline state while keeping the post-commit as a reference for what was produced. Full pipeline rollback: `git reset --hard HEAD~2`.
 
-Never push, never force, never amend.
+Never push, never force, never amend. **Always run git operations inside `Montrroase_website/`, not at the orchestrator root.**
 
 ### Step 9 — Human Visual Review (FRONTEND / FULLSTACK only)
 

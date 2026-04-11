@@ -38,7 +38,8 @@
       "Bash(find /c/Users/Admin/Documents/GitHub/ai_orchestrator -type f -name *indexer*)",
       "mcp__codebase-rag__search_past_sessions",
       "mcp__codebase-rag__search_symbol",
-      "Bash(./venv/Scripts/python.exe manage.py makemigrations team_workspace)"
+      "Bash(./venv/Scripts/python.exe manage.py makemigrations team_workspace)",
+      "mcp__codebase-rag__search_codebase"
     ]
   },
   "enabledMcpjsonServers": [
