@@ -234,13 +234,21 @@ python3 -m ruff check <changed-files> 2>&1 | head -80
 python3 -m ruff format --check <changed-files> 2>&1 | head -40
 ```
 
-**Banned-pattern scan** — grep modified frontend files for AI-slop tells that tsc/eslint won't catch:
-- `bg-gradient-to` / `from-purple` / `to-blue` — AI-slop gradients
-- `rounded-2xl` — must use graduated border-radius (4/6/8/12px)
-- `import ... from 'lucide-react'` — must use Phosphor
-- `font-bold` / `font-\[700\]` — max weight 600 unless page heading
-- Raw Tailwind scales like `bg-zinc-*`, `text-indigo-*`, `bg-slate-*` — must use CSS custom properties
-- Emojis used as UI elements
+**Banned-pattern scan** — grep modified frontend files for AI-slop tells and contrast failures that tsc/eslint won't catch. Full red-line list lives in `_vibecoding_brain/context/design_system.md` §12 and `_vibecoding_brain/agents/skills/frontend_design.md`. Minimum scan:
+- `bg-gradient-to` / `from-purple` / `to-blue` / `from-indigo` — AI-slop gradients
+- `rounded-2xl` — must use graduated radius (4/6/8/12px)
+- `import ... from 'lucide-react'` — Phosphor only
+- `font-bold` / `font-\[700\]` / `font-black` in body — max weight 600 unless page `<h1>`
+- Raw Tailwind neutrals: `bg-zinc-*`, `bg-slate-*`, `bg-gray-*`, `text-indigo-*` — must use CSS custom properties from `globals.css`
+- Emojis used as UI elements (labels, bullets, status)
+- **Hospital-white canvas:** `bg-white` or `background:\s*#FFFFFF` or `background:\s*#FAFAFA` on `body`, page shells, or layout wrappers — canvas must be `var(--color-canvas)` (`#F5F7FA`). Violates the Contrast Rule (`design_system.md` §0).
+- **Nude cards:** any element with `.card-surface` / `card` semantics missing either `border` or `shadow` — grep for cards that lack `box-shadow` + `border` combo. A card must have both.
+- **Dead interactives:** `<button>` / `<Link>` / `<a>` / `role="button"` elements with no `hover:` OR no `focus-visible:` class. Grep each interactive for both.
+- **Nude stats:** `StatTile` / `.kpi-item` / stat-card usage missing `tabular-nums` OR missing a status rail class (`status-rail-*`).
+- **Solid-color badges:** `bg-green-`, `bg-red-`, `bg-yellow-`, `bg-blue-` on `.badge-*` or badge elements — must use tinted-ring variant via `badge-success/warning/error/info` classes.
+- **Pure-black shadows:** `box-shadow: 0 \d+px \d+px rgba(0,\s*0,\s*0` — use slate-tinted `rgba(16, 24, 40, …)`.
+- **Arbitrary motion durations:** `duration-\[\d+ms\]` / `transition-duration:\s*\d+ms` with values not matching the token scale (80/120/180/220/160/280). Use named tokens.
+- `backdrop-filter:\s*blur` on anything that isn't a modal/drawer overlay or the command palette.
 
 **Write-on-existing-file scan** — if the implementer's tool-call log shows a `Write` call on a path that existed pre-pipeline, that is a tool-rule violation. Send it back.
 

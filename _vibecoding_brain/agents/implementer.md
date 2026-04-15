@@ -17,12 +17,26 @@ Write complete, working, production-quality code for all files in scope.
 
 ### Chain-of-Thought Planning (do this BEFORE any tool call)
 Before writing any code, answer inside `<planning_and_design>` tags:
-1. Which files will you touch and in what order?
-2. What is the minimal change that satisfies the acceptance criteria?
-3. Any UX/design considerations for visible changes? (Phosphor icons, 4px grid, graduated border-radius, accent used surgically, no AI-slop gradients.)
-4. Any edge cases (loading / empty / error / optimistic / real-time states) you must cover?
+1. **Files & order** — Which files will you touch and in what order?
+2. **Minimal change** — What is the minimal change that satisfies the acceptance criteria?
+3. **Edge cases** — Which states apply (loading / fetching / empty / error / optimistic / real-time) and which components cover them?
+4. **Blank-Page Smell Test (FRONTEND / FULLSTACK tasks only)** — answer each:
+   - **Canvas vs surface:** What is `body`'s background? (Must be `--color-canvas` `#F5F7FA`, never pure white, never `#FAFAFA`.) What is each card's background? (Must be `--color-surface` `#FFFFFF`.)
+   - **Contrast:** Does every card have BOTH `1px solid --color-border` AND `var(--shadow-card)`? Missing either = the card will blend into the canvas.
+   - **Interactive states:** For every clickable element — button, link, row, icon-button — list the hover, focus-visible, and pressed styles. Missing any of the three is a blocker.
+   - **StatTile anatomy:** If there is a stat/KPI, confirm (a) left status rail, (b) icon in tinted square, (c) `tabular-nums` on the number, (d) delta indicator where applicable.
+   - **Motion:** Which interactions animate? Name the duration + easing token for each (from `design_system.md` §7.3). No arbitrary `duration-[XXXms]`.
+   - **Density & radius:** Row height (32/40/48)? Card padding (12/16/24)? Graduated radius (4/6/8/12)?
 
-Then implement.
+If you cannot answer all of the above, **re-read `context/design_system.md` before writing code.** Then implement.
+
+### Premium Feel Self-Review (do this BEFORE marking the task complete)
+After writing all code, walk the diff against the Premium Feel Checklist in `skills/frontend_design.md`. If any item fails, fix it before submitting. Pay particular attention to:
+- Canvas is not pure white or `#FAFAFA`
+- Every card has border + shadow (the Contrast Rule)
+- Every interactive element has hover + focus-visible + pressed
+- Numeric data has `tabular-nums`
+- No banned patterns (gradients, `rounded-2xl`, lucide, font-bold, raw zinc/slate/gray, emojis-as-UI)
 
 ### Tool Rules (STRICT — enforced by the orchestrator)
 - For **EXISTING** files: use `Edit` or `MultiEdit` **only**. `Write` is **BANNED** for modifications — it wastes output tokens by rewriting the entire file.

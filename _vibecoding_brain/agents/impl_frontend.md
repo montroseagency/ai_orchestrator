@@ -26,13 +26,22 @@ Write complete, working, production-quality frontend code for all frontend files
 
 ### Chain-of-Thought Planning (do this BEFORE any tool call)
 Before writing any code, answer inside `<planning_and_design>` tags:
-1. Which components, hooks, types, and api methods will you touch, and in what order?
-2. What is the minimal change that satisfies the acceptance criteria?
-3. For every endpoint: copy the relevant fields from the backend's API Contract into your plan. Decide where each field lands (`types.ts`, `api.ts`, component prop types).
-4. State coverage: Loading / Fetching / Success / Empty / Error / Optimistic / Real-time — confirm each visible component covers the ones that apply.
-5. Design check: Phosphor icons only, 4px grid, graduated border-radius, accent surgically used, no AI-slop gradients.
+1. **Scope** — Which components, hooks, types, and api methods will you touch, and in what order?
+2. **Minimal change** — What is the minimal change that satisfies the acceptance criteria?
+3. **API mapping** — For every endpoint: copy the relevant fields from the backend's `## API Contract` into your plan. Decide where each field lands (`types.ts`, `api.ts`, component prop types).
+4. **State coverage** — Loading / Fetching / Success / Empty / Error / Optimistic / Real-time — confirm each visible component covers the states that apply.
+5. **Blank-Page Smell Test** — answer each:
+   - **Canvas vs surface:** What is `body`'s background? (Must be `--color-canvas` `#F5F7FA`, never pure white, never `#FAFAFA`.) What is each card's background? (Must be `--color-surface` `#FFFFFF`.) Is there at least one nested container using `--color-surface-sunken`?
+   - **Contrast Rule:** Every card must have BOTH `1px solid --color-border` AND `var(--shadow-card)`. Confirm this for every card on the screen.
+   - **Interactive states:** For every `<button>`, `<a>`, `<Link>`, clickable row, and icon-button, list the hover, focus-visible, and pressed styles you'll use. Missing any of the three is a blocker.
+   - **Elevation layering:** Z-layers from canvas → sidebar (`--color-canvas-sunken`) → cards → raised (dropdowns/popovers) → overlay (modals). Is each layer visually distinct?
+   - **StatTile anatomy:** If there's a stat/KPI — confirm (a) 3px left status rail, (b) icon in 32px `--color-accent-subtle` square, (c) `tabular-nums lining-nums`, (d) delta indicator where applicable. A number-on-white with no other hierarchy is a **nude stat** and will be rejected.
+   - **Badges:** Tinted bg + 1px inset ring + darker text (never solid-color badges).
+   - **Motion:** For every state change that animates, name the duration + easing token from `design_system.md` §7.3. No `duration-[XXXms]` arbitrary values.
+   - **Density:** Row height (32/40/48 — never more). Card padding (12/16/24).
+   - **Radius:** Graduated (cards 8px, inputs/list-items 6px, badges 4px). Uniform `rounded-2xl` is banned.
 
-Then implement.
+If you cannot answer every Blank-Page Smell Test question, **re-read `context/design_system.md` before writing code.** Then implement.
 
 ### Tool Rules (STRICT — enforced by the orchestrator)
 - For **EXISTING** files: use `Edit` or `MultiEdit` **only**. `Write` is **BANNED** for modifications — it wastes output tokens by rewriting the entire file.
@@ -40,10 +49,23 @@ Then implement.
 - **Never** output file contents in your response text.
 - If an `Edit` fails because `old_string` is non-unique, add more surrounding context and retry. **Do NOT fall back to `Write`.**
 
+### Premium Feel Self-Review (do this BEFORE marking the task complete)
+After writing all code, walk the diff against the Premium Feel Checklist in `skills/frontend_design.md`. Every item must pass. Pay particular attention to:
+- Canvas is `--color-canvas` (`#F5F7FA`), never pure white or `#FAFAFA`
+- Every card has border + shadow (the Contrast Rule — Section 0 of `design_system.md`)
+- Every interactive element has hover + focus-visible + pressed states
+- All numeric display uses `tabular-nums lining-nums`
+- StatTiles have left rail + icon square + delta
+- Badges use tinted-ring variant (not solid color)
+- No banned patterns (gradients, `rounded-2xl`, `lucide-react`, `font-bold`, raw `zinc-*`/`slate-*`/`gray-*`, emojis-as-UI, pure-black shadows, arbitrary `duration-[XXXms]`)
+
+If any item fails, fix it before submitting.
+
 ### Summary Output (after all files are written)
 - List of files you created or modified (full paths)
 - One-line description of each change
 - **API Contract Compliance note** — confirm that `client/lib/types.ts` and `client/lib/api.ts` were derived directly from `impl-backend`'s API Contract block, with no guesswork. If you deviated (e.g., added a camelCase transform), state why.
+- **Premium Feel note** — one line confirming the Contrast Rule is satisfied, every interactive has all four states, and all numeric display uses `tabular-nums`. If any checklist item was deliberately skipped, state which and why.
 - Any follow-up items that are out of scope
 
 ## Implementation Rules
