@@ -56,7 +56,7 @@ Before doing anything, read these files to understand the system:
 
 | File | Purpose |
 |---|---|
-| `_vibecoding_brain/agents/AGENTS.md` | **Agent registry** — lists every agent, their role, when to use them, model selection, and skill injections |
+| `_vibecoding_brain/agents/AGENTS.md` | **Agent registry** — lists every agent, their role, when to use them, model selection, and which real Claude Code plugins each invokes at runtime |
 | `_vibecoding_brain/context/project_index.md` | Key files with descriptions |
 | `_vibecoding_brain/context/montrroase_guide.md` | Business domain, user roles, features, data flows |
 | `_vibecoding_brain/problems/rules.md` | Learned prevention rules from past bugs |
@@ -107,7 +107,7 @@ Assess three dimensions:
 
 **Why sequential, not parallel:** Running backend and frontend in parallel forces the frontend to guess the API contract. With sequential execution, `impl-backend` finalizes the contract first and hands it to `impl-frontend` as a single source of truth — no guessing, no drift.
 
-**Refer to `AGENTS.md`** for which agents to spawn, what model to use, and which skills to inject.
+**Refer to `AGENTS.md`** for which agents to spawn, what model to use, and which real plugins each agent invokes at runtime.
 
 ### Step 3.5 — Pre-pipeline Git Checkpoint (SIMPLE and above)
 
@@ -142,7 +142,7 @@ git add . && git commit -m "chore: pre-agent checkpoint [{session_id}]" --allow-
 **Phase A — Broad Discovery (always run):**
 1. `search_multi` with 2-3 queries: raw task description, "existing implementation of {feature}", related component/endpoint names
 2. `search_past_sessions` with the task description for similar prior work
-3. **FRONTEND / FULLSTACK tasks only:** `search_codebase` with `"design tokens for {UI element in task}"` (e.g., "design tokens for button hover state"). Top 5 hits form the `## Design Tokens` Context Package slice. **Do not bulk-inject `design_system.md`** — targeted RAG slices only.
+3. **FRONTEND / FULLSTACK / DESIGN tasks only:** skip the design-token RAG query. The `## Design Tokens` slice is now a one-line pointer telling the agent to call the `ui-ux-pro-max` and `frontend-design` plugins via the `Skill` tool and to read `context/design_system.md` (non-negotiables) directly. Do NOT bulk-inject the design system; do NOT RAG-inject design snippets — the plugins own that surface.
 
 **Phase B — Symbol Lookup (if task names specific code):**
 4. `search_symbol` for each named function/class/component mentioned in the task
@@ -175,15 +175,17 @@ Read the agent's `.md` file from `_vibecoding_brain/agents/` before spawning. **
 ```
 ─── STATIC (cacheable prefix — identical across spawns) ───
 1. Agent identity & instructions   (from agents/{agent}.md)
-2. Injected skills                 (from agents/skills/*.md — see AGENTS.md Skill Injection table)
-3. Architecture rules              (the "Architecture Rules" section above, verbatim)
-4. Domain-filtered prevention rules (from problems/rules.md, filtered by [FRONTEND]/[BACKEND]/[FULLSTACK]/[DATABASE]/[DESIGN])
+2. Architecture rules              (the "Architecture Rules" section above, verbatim)
+3. Domain-filtered prevention rules (from problems/rules.md, filtered by [FRONTEND]/[BACKEND]/[FULLSTACK]/[DATABASE]/[DESIGN])
+4. Injected skill text             (ONLY `skills/contract_review.md` for contract-reviewer — all other fake-skill files are retired; agents invoke real plugins via `Skill` tool at runtime)
 ─── <!-- CACHE BOUNDARY --> ───
 ─── DYNAMIC (per-task) ───
 5. Task description
 6. Context Package                 (RAG results + Design Tokens + Source Files + Imported Dependencies + Backend API Contract)
 7. Completion instruction          ("Mark your task as completed via TaskUpdate when done.")
 ```
+
+**Plugin invocation contract (replaces the old skill-injection pattern):** Agents now call real Claude Code plugins via the `Skill` tool themselves. The orchestrator does NOT pre-inject plugin output into prompts. Each agent's `.md` instructs it which plugin to call and when. See `AGENTS.md` → **Plugin Runtime Invocation** for the full mapping. The only text-injected skill that survives is `skills/contract_review.md` for `contract-reviewer` (project-specific, no plugin equivalent). Agents must spawn with the `Skill` tool available — if using `subagent_type: general-purpose`, no change needed; if using a restricted tool list, add `Skill` explicitly.
 
 **Never interleave dynamic content into the static prefix.** Putting the task description or file contents above the architecture rules breaks the cache key and forces a cold read on every spawn. The `<!-- CACHE BOUNDARY -->` marker is a documentation comment — no runtime effect, but it helps you visually verify the split while assembling prompts.
 
@@ -234,7 +236,7 @@ python3 -m ruff check <changed-files> 2>&1 | head -80
 python3 -m ruff format --check <changed-files> 2>&1 | head -40
 ```
 
-**Banned-pattern scan** — grep modified frontend files for AI-slop tells and contrast failures that tsc/eslint won't catch. Full red-line list lives in `_vibecoding_brain/context/design_system.md` §12 and `_vibecoding_brain/agents/skills/frontend_design.md`. Minimum scan:
+**Banned-pattern scan** — grep modified frontend files for AI-slop tells and contrast failures that tsc/eslint won't catch. Full red-line list lives in `_vibecoding_brain/context/design_system.md` §Red Lines. Minimum scan:
 - `bg-gradient-to` / `from-purple` / `to-blue` / `from-indigo` — AI-slop gradients
 - `rounded-2xl` — must use graduated radius (4/6/8/12px)
 - `import ... from 'lucide-react'` — Phosphor only
@@ -266,6 +268,18 @@ git add . && git commit -m "chore: post-agent checkpoint [{session_id}]"
 This is the point of no return for the pipeline. If the human reviewer later rejects the work, `git reset --hard HEAD~1` restores the pre-pipeline state while keeping the post-commit as a reference for what was produced. Full pipeline rollback: `git reset --hard HEAD~2`.
 
 Never push, never force, never amend. **Always run git operations inside `Montrroase_website/`, not at the orchestrator root.**
+
+### Step 8.6 — Accessibility Gate (FRONTEND / FULLSTACK only)
+
+After the post-quality-gate checkpoint, before handing to human visual review, run the a11y plugin against the running dev server.
+
+1. Check if the dev server is up (`curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` or project-specific URL). If it isn't, skip this step with a note in the wrap-up — do NOT spin up the dev server automatically.
+2. If up: invoke `Skill({skill: "chrome-devtools-mcp:a11y-debugging", args: "<page URL(s) touched by this task>"})`.
+3. The plugin runs semantic HTML, ARIA, focus, keyboard, tap-target, and contrast checks via Chrome DevTools MCP.
+4. On FAIL: compress the findings to <200 words and send them to `impl-frontend` (or `implementer` for single-domain frontend tasks) via `SendMessage` with the Reflection-on-Retry prompt. Re-run Steps 8 and 8.5 on the fix.
+5. On PASS: proceed to Step 9.
+
+Cap this at 2 iterations — a11y failures that persist go to the human in Step 9 rather than spinning indefinitely.
 
 ### Step 9 — Human Visual Review (FRONTEND / FULLSTACK only)
 
@@ -318,7 +332,7 @@ Between agents, compress summaries to <200 words. **Exceptions:** implementers a
 > "Attempt {N}/8. Before retrying: 1) What specifically failed? 2) What is ONE concrete change to fix it? 3) Are you repeating the same approach? If yes, try fundamentally different. Fix EXACTLY these issues — do not refactor."
 
 ### Context Docs (in `_vibecoding_brain/context/`)
-- `design_system.md` — Full design tokens. **RAG source only — never bulk-inject. Use targeted `search_codebase` queries to pull task-relevant snippets.**
+- `design_system.md` — **Non-negotiable taste floor only** (brand tokens, contrast rule, typography discipline, radius scale, motion tokens, red-lines). All other design decisions are delegated to the `ui-ux-pro-max` and `frontend-design` plugins, which agents invoke via the `Skill` tool at runtime. Still RAG source — never bulk-inject.
 - `tech_stack.md` — Stack decisions, testing, deployment
 - `project_index.md` — Key files with descriptions
 - `montrroase_guide.md` — Business domain, user roles, features, data flows

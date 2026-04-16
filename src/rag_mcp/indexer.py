@@ -29,46 +29,14 @@ from typing import Generator
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-# ── Config ────────────────────────────────────────────────────────────────────
-PROJECT_ROOT   = Path(__file__).parent.parent.parent.resolve() / "Montrroase_website"
-DB_PATH        = Path(__file__).parent / "chroma_db"
-MANIFEST_PATH  = Path(__file__).parent / "index_manifest.json"
-COLLECTION     = "codebase"
-MODEL_NAME     = "nomic-ai/nomic-embed-text-v1.5"
-# nomic-embed requires task prefixes for optimal quality:
-#   documents → "search_document: <text>"
-#   queries   → "search_query: <text>"
-EMBED_DOC_PREFIX   = "search_document: "
-EMBED_QUERY_PREFIX = "search_query: "
-CHUNK_SIZE     = 80   # target lines per chunk (line span, not text lines)
-CHUNK_OVERLAP  = 15   # overlap for line-based fallback on large blocks
-BATCH_SIZE     = 8
-
-INCLUDE_EXTENSIONS = {
-    ".py", ".ts", ".tsx", ".js", ".jsx", ".css",
-    ".md", ".json", ".yaml", ".yml", ".toml",
-    ".conf", ".cfg", ".ini", ".html",
-}
-
-EXCLUDE_DIRS = {
-    "node_modules", ".git", "dist", "build", ".next", "__pycache__",
-    "migrations", ".venv", "venv", "env", "chroma_db",
-    "monitoring", "rabbitmq", "coverage", ".pytest_cache", "staticfiles",
-    "sessions",
-}
-
-EXCLUDE_FILES = {
-    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    ".package-lock.json", "next-env.d.ts",
-}
-
-EXT_LANG = {
-    ".py": "python", ".ts": "typescript", ".tsx": "tsx",
-    ".js": "javascript", ".jsx": "jsx", ".css": "css",
-    ".md": "markdown", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
-    ".toml": "toml", ".conf": "conf", ".cfg": "conf", ".ini": "ini",
-    ".html": "html",
-}
+from config import (
+    PROJECT_ROOT, DB_PATH, MANIFEST_PATH, COLLECTION, MODEL_NAME,
+    EMBED_DOC_PREFIX, EMBED_QUERY_PREFIX,
+    CHUNK_SIZE, CHUNK_OVERLAP, BATCH_SIZE, MAX_SEQ_LENGTH,
+    HALF_PRECISION, resolve_device,
+    INCLUDE_EXTENSIONS, EXCLUDE_DIRS, EXCLUDE_FILES, EXT_LANG,
+    ORCHESTRATOR_ROOT, ORCHESTRATOR_INCLUDE,
+)
 
 # Matches top-level exports in TS/TSX/JS files
 TS_SYMBOL_RE = re.compile(
@@ -252,17 +220,6 @@ def extract_md_sections(lines: list[str]) -> list[tuple[int, int, str]]:
 
 
 # ── Multi-root indexing ───────────────────────────────────────────────────────
-
-ORCHESTRATOR_ROOT = Path(__file__).parent.parent.parent.resolve()
-
-# Whitelist of orchestrator paths to index (relative to ORCHESTRATOR_ROOT)
-ORCHESTRATOR_INCLUDE = [
-    "_vibecoding_brain/context",
-    "_vibecoding_brain/AGENTS.md",
-    "_vibecoding_brain/problems/rules.md",
-    "CLAUDE.md",
-    "DOCUMENTATION.md",
-]
 
 
 def iter_orchestrator_files() -> Generator[tuple[Path, str], None, None]:
@@ -558,13 +515,21 @@ def chunk_file(path: Path, rel_path: str | None = None) -> list[dict]:
 def main():
     full_reindex = "--full" in sys.argv
 
+    device = resolve_device()
+
     print(f"Project root : {PROJECT_ROOT}")
     print(f"DB path      : {DB_PATH}")
+    print(f"Device       : {device}")
+    print(f"Batch size   : {BATCH_SIZE}")
+    print(f"Max seq len  : {MAX_SEQ_LENGTH}")
+    print(f"Half prec    : {HALF_PRECISION and device.startswith('cuda')}")
     print(f"Mode         : {'FULL re-index' if full_reindex else 'incremental'}\n")
 
     print("Loading embedding model...")
-    model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-    model.max_seq_length = 8192   # unlock full context window
+    model = SentenceTransformer(MODEL_NAME, trust_remote_code=True, device=device)
+    model.max_seq_length = MAX_SEQ_LENGTH
+    if HALF_PRECISION and device.startswith("cuda"):
+        model.half()
     print("Model ready.\n")
 
     DB_PATH.mkdir(exist_ok=True)

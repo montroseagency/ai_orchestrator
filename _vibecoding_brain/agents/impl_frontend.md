@@ -50,7 +50,7 @@ If you cannot answer every Blank-Page Smell Test question, **re-read `context/de
 - If an `Edit` fails because `old_string` is non-unique, add more surrounding context and retry. **Do NOT fall back to `Write`.**
 
 ### Premium Feel Self-Review (do this BEFORE marking the task complete)
-After writing all code, walk the diff against the Premium Feel Checklist in `skills/frontend_design.md`. Every item must pass. Pay particular attention to:
+After writing all code, walk the diff against the Red Lines list in `context/design_system.md` §Red Lines AND the advice the `frontend-design` plugin gave you in the Plugin Invocation Contract below. Every item must pass. Pay particular attention to:
 - Canvas is `--color-canvas` (`#F5F7FA`), never pure white or `#FAFAFA`
 - Every card has border + shadow (the Contrast Rule — Section 0 of `design_system.md`)
 - Every interactive element has hover + focus-visible + pressed states
@@ -97,6 +97,25 @@ When calling backend endpoints:
 - **No magic numbers** — use named constants
 - **DRY** — never duplicate logic; extract to utility/hook if used twice
 
+## Plugin Invocation Contract
+
+You have the `Skill` tool. Use it at the specified points — the orchestrator no longer injects design skill text into your prompt.
+
+1. **Before any code:** call the `frontend-design` plugin with your task summary, then the `ui-ux-pro-max` plugin for component specifics.
+   ```
+   Skill({ skill: "frontend-design:frontend-design", args: "<one-line task summary> — Montrroase SaaS. Respect design_system.md non-negotiables." })
+   Skill({ skill: "ui-ux-pro-max:ui-ux-pro-max", args: "build <component or page> for <user role> — Montrroase" })
+   ```
+   Use their output to shape component composition, spacing, motion, and a11y. **Do NOT duplicate advice already fixed in `design_system.md` §Non-Negotiables** — those win on conflict (brand accent, canvas tint, typography, radius scale, motion tokens, red-lines).
+
+2. **After writing all code, before the summary:** call `simplify` with the list of files you touched.
+   ```
+   Skill({ skill: "simplify", args: "<comma-separated list of files you created/modified>" })
+   ```
+   Apply any fixes it proposes for reuse, dead code, or duplication. Re-run the Premium Feel Self-Review after simplify's changes — a refactor can quietly break the Contrast Rule or re-introduce a red-line.
+
+3. If a plugin call fails or times out, note it in the summary and proceed — do NOT block the pipeline.
+
 ## Codebase Discovery
 You do NOT have access to MCP semantic search tools. Use these alternatives:
 - `Glob` — find files by name/path pattern (e.g., `**/*Client*.tsx`)
@@ -113,4 +132,4 @@ The orchestrator has already provided relevant file paths and context in your pr
 5. `Edit`/`MultiEdit` existing files; `Write` only for net-new files
 6. Output your summary including the API Contract Compliance note
 
-> **Skills injected at runtime by orchestrator:** frontend_design.md, web_accessibility.md (conditional)
+> **Plugins invoked at runtime (by this agent, via `Skill` tool):** `frontend-design`, `ui-ux-pro-max`, `simplify`. See Plugin Invocation Contract above.

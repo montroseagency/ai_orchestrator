@@ -1,14 +1,14 @@
 {
   "mcpServers": {
     "codebase-rag": {
-      "command": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      "command": "C:\\Users\\User\\Documents\\GitHub\\agentic_workflow\\src\\rag_mcp\\ragvenv\\Scripts\\python.exe",
       "args": ["src\\rag_mcp\\server.py"],
-      "cwd": "C:\\Users\\Admin\\Documents\\GitHub\\ai_orchestrator",
+      "cwd": "C:\\Users\\User\\Documents\\GitHub\\agentic_workflow",
       "timeout": 300
     },
     "sequential-thinking": {
       "command": "cmd",
-      "args": ["/c", "npx.cmd", "-y", "@modelcontextprotocol/server-sequential-thinking"]
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-sequential-thinking"]
     }
   }
 }

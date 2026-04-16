@@ -30,8 +30,8 @@ Before writing any code, answer inside `<planning_and_design>` tags:
 
 If you cannot answer all of the above, **re-read `context/design_system.md` before writing code.** Then implement.
 
-### Premium Feel Self-Review (do this BEFORE marking the task complete)
-After writing all code, walk the diff against the Premium Feel Checklist in `skills/frontend_design.md`. If any item fails, fix it before submitting. Pay particular attention to:
+### Premium Feel Self-Review (FRONTEND / FULLSTACK / DESIGN only — do this BEFORE marking the task complete)
+After writing all code, walk the diff against the Red Lines list in `context/design_system.md` §Red Lines AND the advice the `frontend-design` plugin gave you in the Plugin Invocation Contract below. If any item fails, fix it before submitting. Pay particular attention to:
 - Canvas is not pure white or `#FAFAFA`
 - Every card has border + shadow (the Contrast Rule)
 - Every interactive element has hover + focus-visible + pressed
@@ -79,6 +79,27 @@ After writing all code, walk the diff against the Premium Feel Checklist in `ski
 - **Consistent naming** — match the naming conventions in the files you read
 - **No magic numbers** — use named constants
 - **DRY** — never duplicate logic; extract to utility/service if used twice
+
+## Plugin Invocation Contract
+
+You have the `Skill` tool. Call plugins yourself at the points below — the orchestrator no longer injects design/quality skill text into your prompt.
+
+**1. Before any code — FRONTEND / FULLSTACK / DESIGN tasks only:**
+```
+Skill({ skill: "frontend-design:frontend-design", args: "<one-line task summary> — Montrroase SaaS. Respect design_system.md non-negotiables." })
+Skill({ skill: "ui-ux-pro-max:ui-ux-pro-max", args: "build <component or page> for <user role> — Montrroase" })
+```
+Use the output to shape composition, spacing, motion, and a11y. **`design_system.md` §Non-Negotiables wins on conflict** (brand accent, canvas tint, typography, radius scale, motion tokens, red-lines).
+
+**2. Before any code — BACKEND tasks:** no plugin required; proceed with Chain-of-Thought planning.
+
+**3. After writing all code, before the summary — ALL domains:**
+```
+Skill({ skill: "simplify", args: "<comma-separated list of files you created/modified>" })
+```
+Apply any fixes it proposes for reuse, dead code, or duplication. If frontend, re-run the Premium Feel Self-Review after simplify's changes.
+
+**4. If a plugin call fails or times out, note it in the summary and proceed** — do NOT block the pipeline.
 
 ## Codebase Discovery
 You do NOT have access to MCP semantic search tools. Use these alternatives:

@@ -39,7 +39,11 @@
       "mcp__codebase-rag__search_past_sessions",
       "mcp__codebase-rag__search_symbol",
       "Bash(./venv/Scripts/python.exe manage.py makemigrations team_workspace)",
-      "mcp__codebase-rag__search_codebase"
+      "mcp__codebase-rag__search_codebase",
+      "Bash(ls C:/Users/User/Documents/GitHub/agentic_workflow/Montrroase_website/server/api/permissions*)",
+      "Bash(grep -l \"class IsAdmin\" C:/Users/User/Documents/GitHub/agentic_workflow/Montrroase_website/server/api/views/admin/*.py)",
+      "Bash(python manage.py makemigrations api --name=add_admin_review_to_marketing_post)",
+      "Bash(python -m ruff check api/views/agent/scheduling_views.py api/urls.py)"
     ]
   },
   "enabledMcpjsonServers": [

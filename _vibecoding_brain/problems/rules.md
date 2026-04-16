@@ -145,7 +145,7 @@ See `_vibecoding_brain/problems/rule-11-destructive-action-safety.md` for full d
 
 **Why:** The Marketing Management Command Centre shipped with `body { background: #FAFAFA }` and cards at `#FFFFFF`. Those two values are ~1.5% apart in lightness — the human eye reads them as the same color. Result: cards had no visible edge against the page, the dashboard looked like a blank Google Doc ("hospital white"), and the entire UI was rejected as unfit for a top-tier SaaS. The tokens were technically correct but blank-by-default, and implementers had no explicit rule to prevent this.
 
-**How to apply:** Page canvas is `--color-canvas` (`#F5F7FA`) — a slate-tinted off-white, **never** pure `#FFFFFF` and **never** `#FAFAFA`. Cards use `--color-surface` (pure `#FFFFFF`) AND must carry both `1px solid --color-border` AND `var(--shadow-card)`. This is the **Contrast Rule** (`design_system.md` §0): every surface must be distinguishable from its parent by ≥4% lightness delta or by a border+shadow combo. Before submitting any frontend change, grep the diff for `bg-white` on page shells and for any `#FAFAFA` / `#FFFFFF` used as `body` or page background — reject if found. Run the Blank-Page Smell Test from `skills/frontend_design.md` during Chain-of-Thought planning.
+**How to apply:** Page canvas is `--color-canvas` (`#F5F7FA`) — a slate-tinted off-white, **never** pure `#FFFFFF` and **never** `#FAFAFA`. Cards use `--color-surface` (pure `#FFFFFF`) AND must carry both `1px solid --color-border` AND `var(--shadow-card)`. This is the **Contrast Rule** (`design_system.md` §0): every surface must be distinguishable from its parent by ≥4% lightness delta or by a border+shadow combo. Before submitting any frontend change, grep the diff for `bg-white` on page shells and for any `#FAFAFA` / `#FFFFFF` used as `body` or page background — reject if found. Run the Blank-Page Smell Test from the implementer's / impl-frontend's Chain-of-Thought block during planning.
 
 ---
 
@@ -161,7 +161,7 @@ See `_vibecoding_brain/problems/rule-11-destructive-action-safety.md` for full d
 
 **Why:** The `StatTile` component rendered as "label + number in body font on pure white" with nothing else. No left status rail, no icon, no delta indicator, no `tabular-nums`. The number jittered when data refreshed (variable-width digits), had no visual anchor, and the tile read as a sentence fragment instead of a KPI card. This is the "nude stat" anti-pattern.
 
-**How to apply:** Every stat tile must have (a) a 3px left status rail in `--color-accent`, `--color-success`, `--color-warning`, or `--color-error`, (b) an icon rendered inside a 32px `--color-accent-subtle` square with `--radius-sm`, (c) `font-variant-numeric: tabular-nums lining-nums` on the value (non-negotiable — prevents digit jitter on refresh), (d) a delta badge where a comparison is meaningful. Before shipping any dashboard/overview page, run the StatTile recipe from `design_system.md` §9.1 against each KPI.
+**How to apply:** Every stat tile must have (a) a 3px left status rail in `--color-accent`, `--color-success`, `--color-warning`, or `--color-error`, (b) an icon rendered inside a 32px `--color-accent-subtle` square with `--radius-sm`, (c) `font-variant-numeric: tabular-nums lining-nums` on the value (non-negotiable — prevents digit jitter on refresh), (d) a delta badge where a comparison is meaningful. Before shipping any dashboard/overview page, verify against Red Line #13 in `design_system.md` §Red Lines and ask the `ui-ux-pro-max` plugin for the current StatTile recipe.
 
 ---
 
@@ -169,6 +169,6 @@ See `_vibecoding_brain/problems/rule-11-destructive-action-safety.md` for full d
 
 **Why:** Flat solid-color badges (`bg-green-500 text-white`) read as stickers — bolted on, not integrated. They break the 60-30-10 color discipline because the solid saturation competes with primary CTAs for attention. Quality SaaS (Linear, Stripe, Notion) uses the tinted-ring variant: subtle background tint + 1px inset ring + darker text. Restraint beats saturation.
 
-**How to apply:** Every badge uses the pattern `background: var(--color-success-bg); color: var(--color-success); box-shadow: inset 0 0 0 1px var(--color-success-border);` (and equivalents for warning/error/info). Radius is `--radius-xs` (4px). Font is 12px/500. See `design_system.md` §9.4. Grep the diff for `bg-green-`, `bg-red-`, `bg-yellow-` on badge elements — reject and rewrite.
+**How to apply:** Every badge uses the pattern `background: var(--color-success-bg); color: var(--color-success); box-shadow: inset 0 0 0 1px var(--color-success-border);` (and equivalents for warning/error/info). Radius is `--radius-xs` (4px). Font is 12px/500. See Red Line #10 in `design_system.md` §Red Lines; call `ui-ux-pro-max` for the full recipe if needed. Grep the diff for `bg-green-`, `bg-red-`, `bg-yellow-` on badge elements — reject and rewrite.
 
 ---

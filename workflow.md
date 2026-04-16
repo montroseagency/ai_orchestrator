@@ -124,9 +124,8 @@ Phase A — Foundation (must ship first, in order)
   Depends on: the sections it searches across.
 
   D4. Mobile responsive sweep
-  build: HQ mobile layouts. Rail collapses to bottom bar (Home, Chat, Announcements, Requests, More). Feature sidebar becomes a drawer. Canvas        
-  full-width. Sweep across all 12 sections verifying layouts below 768px. Spec: workspace_ui.md §16.
-  Depends on: all C slices shipped.
+  
+  
 
   D5. HQ Settings (admin-only rail item)
   build: HQ Settings. Admin-only rail item (gear icon, bottom of rail). Manages: channel archival, announcement templates, onboarding track
@@ -149,9 +148,7 @@ Phase A — Foundation (must ship first, in order)
   Depends on: B1, C3.
 
   E3. Team engagement analytics
-  build: HQ Analytics. New admin-only dashboard in Team Portal: channel activity heatmap, DAU/WAU/MAU, announcement read rates, onboarding completion 
-  funnel, kudos distribution, poll participation, wiki edit velocity. Recharts visualizations. Spec: workspace.md §6 Phase 4.
-  Depends on: all C slices for real data.
+  r
 
   ---
   Summary — 23 pipeline runs total

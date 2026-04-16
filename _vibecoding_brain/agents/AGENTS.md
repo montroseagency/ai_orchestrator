@@ -81,20 +81,33 @@ Default to **sonnet** if unsure. Use **haiku** for fast auxiliary work. Use **op
 
 ---
 
-## Skill Injection
+## Plugin Runtime Invocation
 
-Read skill files from `agents/skills/` and append them **inside the static prefix** of the agent's prompt (see CLAUDE.md Step 6 for prompt assembly order).
+> **Replaces the old "Skill Injection" pattern.** We no longer bulk-inject `.md` skill files into agent prompts. Instead, each agent invokes real Claude Code plugins via the `Skill` tool itself, at runtime, against the specific task. Plugins own their knowledge (and update with the plugin) — no duplication in `agents/skills/`.
 
-| Skill File | Inject Into | When |
+The following fake-skill files are **retired** (deleted from `agents/skills/`): `code_review.md`, `frontend_design.md`, `ui_ux_pro_max.md`, `web_design_guidelines.md`, `web_accessibility.md`.
+The only surviving text-injected skill is `skills/contract_review.md` — it's project-specific (Montrroase's snake_case/camelCase 4-check protocol) and has no plugin equivalent.
+
+### Plugin Invocation Table
+
+| Agent | Invokes at runtime (via `Skill` tool) | When |
 |---|---|---|
-| `skills/code_review.md` | impl-backend | BACKEND / FULLSTACK / DATABASE |
-| `skills/frontend_design.md` | architect, implementer, impl-frontend | FRONTEND / FULLSTACK / DESIGN |
-| `skills/ui_ux_pro_max.md` | architect | FRONTEND / FULLSTACK / DESIGN |
-| `skills/web_design_guidelines.md` | architect | FRONTEND / FULLSTACK / DESIGN |
-| `skills/web_accessibility.md` | architect, impl-frontend | FRONTEND / FULLSTACK / DESIGN |
-| `skills/contract_review.md` | contract-reviewer | FULLSTACK (MEDIUM+ only) |
+| **architect** | `ui-ux-pro-max` | Start of Design Brief phase (FRONTEND / FULLSTACK / DESIGN). Backend-only tasks skip this. |
+| **implementer** | `frontend-design` → `ui-ux-pro-max` (if FRONTEND/FULLSTACK/DESIGN), then `simplify` | Design plugins first, before any code; `simplify` last, before the summary. |
+| **impl-frontend** | `frontend-design` → `ui-ux-pro-max`, then `simplify` | Always. |
+| **impl-backend** | `simplify` | Last step, before emitting the `## API Contract` block. |
+| **contract-reviewer** | — (receives text-injected `skills/contract_review.md` only) | Already at FULLSTACK MEDIUM+. |
+| **problem-tracker** | — | None. |
 
-**Injection format:** skill file contents sit between the agent's identity block and the architecture rules, inside the cache-friendly static prefix.
+Orchestrator-invoked (not agent-invoked):
+
+| Plugin | When |
+|---|---|
+| `chrome-devtools-mcp:a11y-debugging` | After Step 8.5 checkpoint, before Step 9 visual review. FRONTEND/FULLSTACK only, conditional on dev server being up. See CLAUDE.md Step 8.6. |
+
+### Tool access
+
+Agents must spawn with the `Skill` tool available. If spawned as `subagent_type: general-purpose`, no change needed (all tools). If using a restricted tool list, include `Skill` explicitly.
 
 ---
 
@@ -119,11 +132,11 @@ Read these files when needed for context:
 Before spawning any agent, the orchestrator must:
 
 1. Read the agent's `.md` file from `agents/`
-2. Append injected skill files (see Skill Injection table) — inside the static prefix
+2. Append `skills/contract_review.md` in the static prefix **only** for `contract-reviewer`. No other skill-file injection. All other agents call plugins via `Skill` themselves — see Plugin Invocation Table.
 3. Assemble the prompt in the strict **static → dynamic** order (see CLAUDE.md Step 6)
 4. Embed full contents of files the agent needs to read/modify (never summarize code) — as **dynamic** content, after the cache boundary
 5. Include domain-tag-filtered prevention rules from `problems/rules.md` — as **semi-static** content
 6. Include architecture rules from CLAUDE.md — **static**
 7. Instruct the agent to mark its task as completed when done
-8. Remind the agent: use `Glob`/`Grep` for file discovery (NO MCP access)
+8. Verify the agent has the `Skill` tool available (spawn as `general-purpose` or include `Skill` in the tool list). Remind the agent to use `Glob`/`Grep` for file discovery (NO MCP access).
 9. Enforce tool rules: implementers must `Edit`/`MultiEdit` existing files; `Write` only for new files

@@ -41,29 +41,19 @@ try:
 except ImportError:
     pass
 
-# ── Config ────────────────────────────────────────────────────────────────────
-PROJECT_ROOT      = Path(__file__).parent.parent.parent.resolve() / "Montrroase_website"
-ORCHESTRATOR_ROOT = Path(__file__).parent.parent.parent.resolve()
-DB_PATH           = Path(__file__).parent / "chroma_db"
-COLLECTION      = "codebase"
-SESSION_COLLECTION = "sessions"
-MODEL_NAME         = "nomic-ai/nomic-embed-text-v1.5"
-EMBED_QUERY_PREFIX = "search_query: "   # nomic task prefix for queries
-EMBED_DOC_PREFIX   = "search_document: "  # nomic task prefix for indexing
-
-# Search quality controls
-MIN_RELEVANCE   = 0.25   # drop chunks below 25% cosine similarity
-MAX_PER_FILE    = 2      # MMR: at most 2 chunks per file per query result
-
-# Session memory controls
-SESSION_MIN_RELEVANCE = 0.50  # stricter threshold for session matches
-SESSION_BUDGET_TOKENS = 300   # max tokens for formatted session context
-CHARS_PER_TOKEN_ESTIMATE = 4  # fallback token estimation
+from config import (
+    PROJECT_ROOT, ORCHESTRATOR_ROOT, DB_PATH,
+    COLLECTION, SESSION_COLLECTION, MODEL_NAME, MAX_SEQ_LENGTH,
+    EMBED_QUERY_PREFIX, EMBED_DOC_PREFIX, HALF_PRECISION,
+    MIN_RELEVANCE, MAX_PER_FILE,
+    SESSION_MIN_RELEVANCE, SESSION_BUDGET_TOKENS, CHARS_PER_TOKEN_ESTIMATE,
+    WORKER_THREADS, resolve_device,
+)
 
 # ── Thread pool ──────────────────────────────────────────────────────────────
-# Pool for running CPU-bound tool work (encoding, ChromaDB queries) off the
-# asyncio event loop.
-_work_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="worker")
+_work_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=WORKER_THREADS, thread_name_prefix="worker",
+)
 
 # ── Lazy globals ─────────────────────────────────────────────────────────────
 _model: SentenceTransformer | None      = None
@@ -87,14 +77,22 @@ def _load_model_sync() -> str | None:
 
     t0 = time.monotonic()
     try:
+        device = resolve_device()
         from sentence_transformers import SentenceTransformer  # noqa: PLC0415
         print(f"[rag-mcp] sentence_transformers imported ({time.monotonic()-t0:.1f}s)", file=sys.stderr, flush=True)
-        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-        _model.max_seq_length = 8192
+        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True, device=device)
+        _model.max_seq_length = MAX_SEQ_LENGTH
+        if HALF_PRECISION and device.startswith("cuda"):
+            _model.half()
         # Warm up: run a dummy encode so first real query is fast
         _model.encode(["warmup"])
         _model_loaded = True
-        print(f"[rag-mcp] Model loaded and warmed up ({time.monotonic()-t0:.1f}s)", file=sys.stderr, flush=True)
+        print(
+            f"[rag-mcp] Model loaded on {device} "
+            f"(fp16={HALF_PRECISION and device.startswith('cuda')}, "
+            f"seq={MAX_SEQ_LENGTH}, {time.monotonic()-t0:.1f}s)",
+            file=sys.stderr, flush=True,
+        )
         return None
     except Exception as exc:
         import traceback

@@ -86,6 +86,18 @@ Treat the contract block like a public API spec. Be precise.
 - **No magic numbers** — use named constants
 - **DRY** — never duplicate logic; extract to utility/service if used twice
 
+## Plugin Invocation Contract
+
+You have the `Skill` tool. The orchestrator no longer injects `code_review.md` — instead, run the `simplify` plugin once, at the end of your work.
+
+**After writing all code, immediately before emitting the `## API Contract` block:**
+```
+Skill({ skill: "simplify", args: "<comma-separated list of server/ files you created/modified>" })
+```
+Apply any fixes it proposes for reuse, dead code, or duplication. If simplify's changes alter the serializer shape, update the `## API Contract` block to match — the contract must reflect the final code, not the pre-simplify version.
+
+If the plugin call fails or times out, note it in the summary and proceed — do NOT block the pipeline.
+
 ## Codebase Discovery
 You do NOT have access to MCP semantic search tools. Use these alternatives:
 - `Glob` — find files by name/path pattern (e.g., `**/views/*.py`)
@@ -102,4 +114,4 @@ The orchestrator has already provided relevant file paths and context in your pr
 5. `Edit`/`MultiEdit` existing files; `Write` only for net-new files
 6. Output your summary **including the mandatory `## API Contract` block**
 
-> **Skills injected at runtime by orchestrator:** code_review.md
+> **Plugins invoked at runtime (by this agent, via `Skill` tool):** `simplify`. See Plugin Invocation Contract above.

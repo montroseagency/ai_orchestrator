@@ -53,6 +53,29 @@ Map the critical path in max 3 steps.
 
 ---
 
+## Phase 0.5 — Plugin Consultation (FRONTEND / FULLSTACK / DESIGN only)
+
+Before writing the Design Brief, call the `ui-ux-pro-max` plugin to get task-relevant palette/font/pattern recommendations. Do NOT duplicate advice already fixed in `context/design_system.md` §Non-Negotiables (brand accent, canvas tint, typography discipline, radius scale, motion tokens, red-lines) — those are non-negotiable and override any plugin suggestion that conflicts.
+
+```
+Skill({
+  skill: "ui-ux-pro-max:ui-ux-pro-max",
+  args: "plan <one-line task summary> — Montrroase SaaS. Respect the brand non-negotiables in design_system.md. Suggest component composition, spacing, motion, and chart choices only."
+})
+```
+
+Use its output to inform:
+- **Design Brief → Visual Specification** (component composition, sizing)
+- **Design Brief → Animation Specification** (motion choreography within our duration tokens)
+- **Design Brief → Data Visualization** (chart type recommendations)
+- **Design Brief → Icons** (only if Phosphor coverage is ambiguous for this task)
+
+Cite the plugin's recommendation in **Design Rationale** with one line: "Per `ui-ux-pro-max`, chose X because Y." If the plugin's suggestion conflicts with `design_system.md`, the design system wins — explain the override in Design Rationale.
+
+Backend-only tasks skip this phase and mark Design Brief as N/A.
+
+---
+
 ## Output Format (EXACTLY this structure)
 
 ```markdown

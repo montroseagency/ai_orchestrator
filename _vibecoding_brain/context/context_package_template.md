@@ -11,9 +11,9 @@ Claude's prefix cache fires when the leading content of a prompt is identical ac
 ```
 ─── STATIC (cacheable) ──────────────────────────────
 1. Agent identity & instructions  (from agents/{agent}.md)
-2. Injected skills                (from agents/skills/*.md)
-3. Architecture rules             (from CLAUDE.md Architecture Rules section)
-4. Domain-filtered prevention     (from problems/rules.md, filtered by [FRONTEND]/[BACKEND]/...)
+2. Architecture rules             (from CLAUDE.md Architecture Rules section)
+3. Domain-filtered prevention     (from problems/rules.md, filtered by [FRONTEND]/[BACKEND]/...)
+4. Injected skill text            (ONLY skills/contract_review.md for contract-reviewer — all other fake skills retired; agents invoke real plugins via Skill tool at runtime)
 ─── <!-- CACHE BOUNDARY --> ─────────────────────────
 ─── DYNAMIC (per-task) ──────────────────────────────
 5. Task description
@@ -60,8 +60,9 @@ The `<!-- CACHE BOUNDARY -->` marker is a comment for orchestrator sanity checks
 {If no past sessions match: "No similar past sessions found."}
 
 ## Design Tokens
-> FRONTEND / FULLSTACK tasks only. RAG-retrieved from `context/design_system.md` — max 5 snippets, task-relevant only. NEVER bulk-inject the full design system file.
-{Top 5 snippets from the "design tokens for {task UI element}" RAG query}
+> FRONTEND / FULLSTACK / DESIGN tasks only. One-line pointer — agents call the `ui-ux-pro-max` and `frontend-design` plugins at runtime for task-specific design guidance.
+>
+> "Read `context/design_system.md` for the brand non-negotiables (taste floor). For everything else — component composition, spacing choices, motion choreography, chart recommendations, a11y tactics — call `Skill({skill: 'ui-ux-pro-max:ui-ux-pro-max'})` and `Skill({skill: 'frontend-design:frontend-design'})` yourself. On conflict, `design_system.md` wins."
 
 ## Source Files
 
@@ -99,10 +100,10 @@ When embedding the context package in an agent's prompt, include only the sectio
 
 | Agent | RAG Results | Source Files (MODIFY) | Source Files (READ) | Imported Deps | Design Tokens | Backend API Contract |
 |-------|-------------|----------------------|--------------------|----|---------------|----------------------|
-| **architect** | All results | Paths only (no contents) | Paths only | — | RAG-retrieved, max 5 snippets | — |
-| **implementer** | All results | Full contents | Full contents | Full contents | RAG-retrieved (if frontend task) | — |
+| **architect** | All results | Paths only (no contents) | Paths only | — | Pointer line only — plugin-sourced at runtime | — |
+| **implementer** | All results | Full contents | Full contents | Full contents | Pointer line (if frontend task) — plugin-sourced at runtime | — |
 | **impl-backend** | Backend results | Backend files (full) | Related backend files | Full contents | — | — |
-| **impl-frontend** | Frontend results | Frontend files (full) | Related frontend files | Full contents | RAG-retrieved, task-relevant only | **Full block** (source of truth) |
+| **impl-frontend** | Frontend results | Frontend files (full) | Related frontend files | Full contents | Pointer line — plugin-sourced at runtime | **Full block** (source of truth) |
 | **contract-reviewer** | — | `api.ts`, `types.ts`, new/modified `urls.py` + views + serializers | — | — | — | **Full block** (source of truth) |
 
 **Prevention rules** are handled separately — they sit inside the static prefix (step 4 above), domain-filtered per agent. Do not re-embed them inside the Context Package.
@@ -121,7 +122,7 @@ The orchestrator runs these queries to build the context package:
    - "existing implementation of {feature area}"
    - Related component/endpoint names (if identifiable from task)
 2. `search_past_sessions` with task description
-3. **FRONTEND / FULLSTACK tasks only:** `search_codebase` with **"design tokens for {UI element in task}"** (e.g., "design tokens for button hover state", "design tokens for modal header"). Top 5 hits become the `## Design Tokens` slice. This replaces bulk-injection of `context/design_system.md`.
+3. **FRONTEND / FULLSTACK / DESIGN tasks only:** no design-token RAG query needed anymore. The `## Design Tokens` slice of the Context Package is a single pointer line that tells the agent to call `ui-ux-pro-max` and `frontend-design` plugins via the `Skill` tool and to check `context/design_system.md` for the non-negotiable taste floor. Do NOT RAG-inject design tokens into the prompt.
 
 ### Phase B — Symbol Lookup (if task names specific code)
 4. `search_symbol` for each named function/class/component in the task
